@@ -1,0 +1,60 @@
+{
+	admin off
+	email admin@example.com
+}
+
+# Replace with your actual domain
+preview.yourdomain.com {
+	# Basic auth for Phase 1
+	basicauth /* {
+		admin JDJhJDEwJE5vZkVxZ0l5Y0p5ZzVYcTkuY0J2eG9wZ2V4V25ZbW96ZGxYc3VwV096
+	}
+
+	# Studio UI (static files served by workspace)
+	handle_path /studio/* {
+		reverse_proxy workspace:5173
+	}
+
+	# API
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+
+	# WebSocket for live updates
+	handle_path /ws {
+		reverse_proxy api:8000
+	}
+
+	# Preview (Vite dev server with HMR)
+	handle_path /preview/* {
+		reverse_proxy workspace:5173
+	}
+
+	# Root redirects to studio
+	handle / {
+		redir /studio/
+	}
+}
+
+# Local development (no auth)
+localhost {
+	handle_path /studio/* {
+		reverse_proxy workspace:5173
+	}
+
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle_path /ws {
+		reverse_proxy api:8000
+	}
+
+	handle_path /preview/* {
+		reverse_proxy workspace:5173
+	}
+
+	handle / {
+		redir /studio/
+	}
+}

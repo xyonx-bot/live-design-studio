@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - studio-network
+    depends_on:
+      - api
+      - workspace
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - workspace-data:/workspace
+    environment:
+      - WORKSPACE_PATH=/workspace
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - DEBUG=true
+    networks:
+      - studio-network
+    restart: unless-stopped
+
+  workspace:
+    build:
+      context: ./workspace
+      dockerfile: Dockerfile
+    volumes:
+      - workspace-data:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://api:8000
+    networks:
+      - studio-network
+    restart: unless-stopped
+
+  screenshotter:
+    build:
+      context: ./screenshotter
+      dockerfile: Dockerfile
+    volumes:
+      - workspace-data:/workspace:ro
+    networks:
+      - studio-network
+    restart: unless-stopped
+
+volumes:
+  workspace-data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  studio-network:
+    driver: bridge

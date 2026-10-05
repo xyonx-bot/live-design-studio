@@ -1,0 +1,14 @@
+{
+  "name": "screenshotter",
+  "version": "1.0.0",
+  "description": "Playwright screenshot service for Live Design Studio",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0",
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}

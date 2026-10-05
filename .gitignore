@@ -1,0 +1,50 @@
+# Live Design Studio - Git Ignore
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+backend/__pycache__/
+backend/.pytest_cache/
+*.pyc
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Docker
+docker-compose.override.yml
+
+# Workspace data (git repo inside)
+workspace/.git/
+
+# Screenshots
+screenshots/
+
+# Test coverage
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/

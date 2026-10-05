@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.20
+pydantic==2.10.0
+pydantic-settings==2.6.1
+python-jose[cryptography]==3.4.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.1
+gitpython==3.1.43
+httpx==0.28.1
+websockets==13.1
+watchfiles==1.0.3
