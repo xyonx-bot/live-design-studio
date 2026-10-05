@@ -76,3 +76,14 @@ class ErrorResponse(BaseModel):
 class WSMessage(BaseModel):
     type: str
     payload: dict
+
+
+class ChatMessage(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    response: str
+    session_id: Optional[str] = None
+    tools_used: List[str] = []

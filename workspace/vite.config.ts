@@ -19,5 +19,15 @@ export default defineConfig({
     watch: {
       usePolling: true,
     },
+    proxy: {
+      '/api': {
+        target: 'http://livepreview_api:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://livepreview_api:8000',
+        ws: true,
+      },
+    },
   },
 })
