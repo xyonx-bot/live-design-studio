@@ -4,12 +4,14 @@ import {
   ArrowLeft, Check, ChevronDown, ChevronRight,
   Component as ComponentIcon, Eye, Grid2X2, History,
   LayoutTemplate, Maximize2, MessageSquareText, Monitor,
-  PanelLeft, PanelRight, Search, Send, Settings2,
+  PanelLeft, PanelRight, Search, Send,
   Smartphone, Sparkles, Tablet, WandSparkles, X,
 } from 'lucide-react'
 
 type ViewMode = 'single' | 'grid' | 'page'
 type Device = 'desktop' | 'tablet' | 'mobile'
+
+const DEVICE_WIDTHS: Record<Device, number> = { desktop: 1440, tablet: 768, mobile: 375 }
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -117,8 +119,7 @@ function Sidebar({
         ))}
       </div>
       <div className="sidebar-bottom">
-        <button><History size={15} /> Version history</button>
-        <button><Settings2 size={15} /> Workspace settings</button>
+        <span style={{ color: '#51515a', fontSize: 10, padding: '4px 8px' }}>{Object.keys(previews).length} pieces in workspace</span>
       </div>
     </aside>
   )
@@ -134,17 +135,20 @@ function PreviewCanvas({
   view: ViewMode
   setSelected: (v: string) => void
 }) {
+  const label =
+    selected === '__page__' ? 'Full page' : selected ? (selected.includes(':') ? selected.split(':')[1] : selected) : 'Nothing selected'
+
   return (
     <section className="preview-column">
       <div className="preview-toolbar">
         <div className="breadcrumbs">
           <ArrowLeft size={14} /><span>Preview</span><ChevronRight size={13} />
-          <strong>{selected === '__page__' ? 'Full page' : (selected.includes(':') ? selected.split(':')[1] : selected)}</strong>
+          <strong>{label}</strong>
         </div>
         <div className="toolbar-actions">
           <div className="device-toggle">
             {([['desktop', Monitor], ['tablet', Tablet], ['mobile', Smartphone]] as const).map(([name, Icon]) => (
-              <button key={name} aria-label={name} onClick={() => setDevice(name)} className={cn(device === name && 'active')}>
+              <button key={name} aria-label={name} onClick={() => setDevice(name)} className={cn(device === name && 'active')} title={`${name} · ${DEVICE_WIDTHS[name]}px`}>
                 <Icon size={15} />
               </button>
             ))}
@@ -152,20 +156,63 @@ function PreviewCanvas({
         </div>
       </div>
       <div className="canvas-wrap">
-        <div className={cn('device-frame', `device-${device}`)}>
+        <ResizableFrame device={device}>
           <div className="frame-top">
             <span className="traffic"><i /><i /><i /></span>
-            <span className="frame-url">preview.local / {(selected ?? 'page').toLowerCase().replace(':', ' / ')}</span>
+            <span className="frame-url">{DEVICE_WIDTHS[device]}px{selected ? ` · ${label.toLowerCase()}` : ''}</span>
             <span className="frame-dots">•••</span>
           </div>
-          <PreviewContent previews={previews} selected={selected} view={view} setSelected={setSelected} />
-        </div>
+          <PreviewContent previews={previews} selected={selected} view={view} setSelected={setSelected} device={device} />
+        </ResizableFrame>
       </div>
       <div className="preview-footer">
         <span><span className="live-dot" /> Live preview connected</span>
-        <span>Vite HMR · hot reload</span>
+        <span>{view === 'single' ? label : view === 'grid' ? `${Object.keys(previews).length} pieces` : 'Page view'}</span>
       </div>
     </section>
+  )
+}
+
+/**
+ * Renders children at the true device pixel width; scales down with transform
+ * when the canvas area is narrower, so a 1440px section looks exactly like a
+ * real 1440px browser. Scrolls only inside the frame.
+ */
+function ResizableFrame({ device, children }: { device: Device; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(1)
+  const width = DEVICE_WIDTHS[device]
+
+  useEffect(() => {
+    const el = ref.current?.parentElement
+    if (!el) return
+    const measure = () => {
+      const avail = el.clientWidth - 50 // canvas padding
+      setScale(Math.min(1, avail / width))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [width])
+
+  const viewHeight = '82vh'
+  return (
+    <div className="device-frame-scaler" style={{ width: width * scale, height: viewHeight, overflow: 'hidden' }}>
+      <div
+        ref={ref}
+        className="device-frame"
+        style={{
+          width,
+          height: `calc(${viewHeight} / ${scale})`,
+          minHeight: 480,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+        }}
+      >
+        {children}
+      </div>
+    </div>
   )
 }
 
@@ -176,49 +223,68 @@ function PreviewContent({
   selected: string
   view: ViewMode
   setSelected: (v: string) => void
+  device: Device
 }) {
   if (view === 'grid') {
+    const names = Object.keys(previews).sort()
     return (
       <div className="frame-real">
-        <div className="grid-stage" style={{ height: 'auto', minHeight: '100%', background: 'transparent' }}>
-          {Object.keys(previews).sort().map((name) => (
-            <div key={name} className={cn('grid-card', selected === name && 'selected')} onClick={() => setSelected(name)}>
-              <div className="grid-card-bar" />
-              <strong>{name.includes(':') ? name.split(':')[1] : name}</strong>
-              <span>{name.split(':')[0]}</span>
-            </div>
-          ))}
-        </div>
+        {names.length === 0 ? (
+          <EmptyStage text="Nothing here yet — ask the agent to create your first piece." />
+        ) : (
+          <div className="grid-stage" style={{ height: 'auto', minHeight: '100%', background: 'transparent' }}>
+            {names.map((name) => (
+              <div key={name} className={cn('grid-card', selected === name && 'selected')} onClick={() => setSelected(name)}>
+                <div className="grid-card-bar" />
+                <strong>{name.includes(':') ? name.split(':')[1] : name}</strong>
+                <span>{name.split(':')[0]}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     )
   }
 
   if (view === 'page' || selected === '__page__') {
-    const order = ['layout:Header', 'sections:Hero', 'sections:Features', 'layout:Footer']
+    // Dynamic page order: headers first, then sections in library order, then footers.
+    const headers = Object.keys(previews).filter((n) => n.startsWith('layout:') && /header|nav/i.test(n)).sort()
+    const footers = Object.keys(previews).filter((n) => n.startsWith('layout:') && /footer/i.test(n)).sort()
+    const sections = Object.keys(previews).filter((n) => n.startsWith('sections:')).sort()
+    const order = [...headers, ...sections, ...footers]
+    const any = order.some((n) => previews[n])
     return (
       <div className="page-stack">
-        {order.map((name) => {
+        {any ? order.map((name) => {
           const C = previews[name]
           return C ? <C key={name} /> : null
-        })}
+        }) : <EmptyStage text="No sections yet — ask the agent for a hero, a features section, a footer…" />}
       </div>
     )
   }
 
   const C = previews[selected]
-  if (!C) {
-    return (
-      <div className="frame-real centered">
-        <div className="stage-label">Nothing selected</div>
-        <p style={{ color: '#7c7d75', fontSize: 12 }}>Pick a piece from the library, or ask the agent to create one.</p>
-      </div>
-    )
-  }
+  if (!C) return (
+    <div className="frame-real centered">
+      <EmptyStage text="Pick a piece from the library, or ask the agent to create one." />
+    </div>
+  )
   const isSection = selected.startsWith('sections:') || selected.startsWith('layout:')
   return (
     <div className={cn('frame-real', !isSection && 'centered')}>
       {!isSection && <div className="stage-label">{selected.replace(':', ' / ')}</div>}
       <C />
+    </div>
+  )
+}
+
+function EmptyStage({ text }: { text: string }) {
+  return (
+    <div style={{ display: 'grid', placeItems: 'center', height: '100%', padding: 40, textAlign: 'center' }}>
+      <div>
+        <Sparkles size={28} color="#7c7d75" style={{ marginBottom: 12 }} />
+        <p style={{ color: '#7c7d75', fontSize: 12, maxWidth: 320, lineHeight: 1.5 }}>{text}</p>
+      </div>
     </div>
   )
 }
@@ -374,7 +440,7 @@ function Login({ onLogin }: { onLogin: (token: string) => void }) {
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
-  const [selected, setSelectedRaw] = useState<string>('sections:Hero')
+  const [selected, setSelectedRaw] = useState<string>('')
   const [device, setDevice] = useState<Device>('desktop')
   const [view, setView] = useState<ViewMode>('single')
   const [showLeft, setShowLeft] = useState(true)
@@ -386,6 +452,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
 
   const setSelected = (name: string) => { setSelectedRaw(name); setView('single') }
+  const jumpToPiece = (name: string) => { setSelectedRaw(name); setView('single') }
 
   // Auto-discover preview components
   const previews = useMemo(() => {
@@ -416,7 +483,12 @@ export default function App() {
       try {
         const msg = JSON.parse(ev.data)
         if (msg.type === 'file_changed') {
-          pushActivity({ title: `${msg.payload.action === 'edit' ? 'Editing' : msg.payload.action === 'delete' ? 'Deleted' : 'Wrote'} ${msg.payload.path}`, detail: 'hot reload triggered', state: 'working' })
+          const p = msg.payload.path as string
+          pushActivity({ title: `${msg.payload.action === 'edit' ? 'Editing' : msg.payload.action === 'delete' ? 'Deleted' : 'Wrote'} ${p}`, detail: 'hot reload triggered', state: 'working' })
+          // Auto-jump the canvas to the piece the agent just touched
+          let m = p.match(/src\/(components|sections|layout)\/([^/]+)\.preview\.tsx$/)
+          if (m) jumpToPiece(`${m[1]}:${m[2]}`)
+          else if ((m = p.match(/src\/(components|sections|layout)\/([^./]+)\.tsx$/))) jumpToPiece(`${m[1]}:${m[2]}`)
         } else if (msg.type === 'git_commit') {
           pushActivity({ title: 'Version saved', detail: msg.payload.message ?? msg.payload.sha, state: 'saved' })
         }
