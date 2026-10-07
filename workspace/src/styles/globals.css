@@ -114,7 +114,7 @@
 .preview-footer { height: 38px; display: flex; justify-content: space-between; align-items: center; color: #66666e; font-size: 10px; padding: 0 18px; }
 .preview-footer span { display: flex; align-items: center; gap: 6px; }
 .live-dot { width: 6px; height: 6px; background: #b9ed46; border-radius: 50%; box-shadow: 0 0 0 3px #b9ed4619; }
-.component-stage { display: flex; flex-direction: column; gap: 16px; align-items: center; justify-content: center; height: 100%; background: #f1eee5; color: #171814; padding: 24px; overflow: auto; }
+/* (demo-only .component-stage removed in P1) */
 .stage-label { font: 10px monospace; color: #7c7d75; text-transform: uppercase; letter-spacing: .12em; margin-bottom: 4px; }
 .panel-heading { justify-content: space-between; align-items: flex-start; }
 .eyebrow-label { color: #777780; font-size: 9px; letter-spacing: .15em; margin-bottom: 7px; }
