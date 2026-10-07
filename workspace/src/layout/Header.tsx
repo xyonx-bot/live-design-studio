@@ -1,6 +1,5 @@
 import { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/Button'
 
 interface HeaderProps extends React.HTMLAttributes<HTMLElement> {
   logo?: React.ReactNode

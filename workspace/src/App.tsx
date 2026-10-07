@@ -1,132 +1,191 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from './lib/utils'
-import { Send, MessageSquare, LayoutGrid, FileText, ChevronLeft, ChevronRight, Settings, X, RotateCw, Download } from 'lucide-react'
+import {
+  ArrowLeft, Check, ChevronDown, ChevronRight,
+  Component as ComponentIcon, Eye, Grid2X2, History,
+  LayoutTemplate, Maximize2, MessageSquareText, Monitor,
+  PanelLeft, PanelRight, Search, Send, Settings2,
+  Smartphone, Sparkles, Tablet, WandSparkles, X,
+} from 'lucide-react'
 
-interface PreviewProps {
-  component?: string
-  view?: 'single' | 'grid' | 'page'
-}
+type ViewMode = 'single' | 'grid' | 'page'
+type Device = 'desktop' | 'tablet' | 'mobile'
 
 interface ChatMessage {
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant'
   content: string
   timestamp: Date
   tools_used?: string[]
 }
 
-function App() {
-  const [previewComponent, setPreviewComponent] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'single' | 'grid' | 'page'>('single')
-  const [error, setError] = useState<string | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [chatSidebarOpen, setChatSidebarOpen] = useState(true)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [inputValue, setInputValue] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+interface ActivityEvent {
+  time: string
+  title: string
+  detail: string
+  state: 'success' | 'working' | 'saved'
+}
 
-  // Auto-discover preview components
-  const [previews, setPreviews] = useState<Record<string, React.ComponentType>>({})
+/* ── auth ──────────────────────────────────────────────────────── */
+const TOKEN_KEY = 'lds_token'
+const getToken = () => localStorage.getItem(TOKEN_KEY)
 
-  useEffect(() => {
-    const modules = import.meta.glob<{ default: React.ComponentType }>('./**/*.preview.tsx', { eager: true })
-    const discovered: Record<string, React.ComponentType> = {}
-    for (const [path, mod] of Object.entries(modules)) {
-      const name = path.replace('./', '').replace('.preview.tsx', '').replace(/\//g, ':')
-      if (mod.default) {
-        discovered[name] = mod.default
-      }
-    }
-    setPreviews(discovered)
-  }, [])
-
-  // Scroll to bottom of messages
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+async function api(path: string, init: RequestInit = {}) {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init.headers as Record<string, string>),
   }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return fetch(path, { ...init, headers })
+}
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+/* ── static library metadata (matches v0 template) ─────────────── */
+const TYPE_META: Record<string, { icon: any; color: string }> = {
+  components: { icon: ComponentIcon, color: 'lime' },
+  layout: { icon: PanelLeft, color: 'pink' },
+  sections: { icon: WandSparkles, color: 'blue' },
+}
+const COLORS = ['lime', 'blue', 'orange', 'purple', 'pink', 'slate']
 
-  // Send message to Hermes Agent via backend
-  const sendMessage = async () => {
-    if (!inputValue.trim() || isLoading) return
-    
-    const userMessage = inputValue.trim()
-    setInputValue('')
-    setIsLoading(true)
-    
-    // Add user message immediately
-    const newUserMessage: ChatMessage = {
-      role: 'user',
-      content: userMessage,
-      timestamp: new Date()
+function LogoMark() {
+  return <div className="logo-mark"><span /><span /><span /><span /></div>
+}
+
+function Sidebar({
+  previews, selected, setSelected,
+}: {
+  previews: Record<string, React.ComponentType>
+  selected: string
+  setSelected: (v: string) => void
+}) {
+  const [open, setOpen] = useState<Record<string, boolean>>({ components: true, layout: true, sections: true })
+  const toggle = (key: string) => setOpen((v) => ({ ...v, [key]: !v[key] }))
+
+  const groups = useMemo(() => {
+    const g: Record<string, string[]> = { components: [], layout: [], sections: [] }
+    for (const name of Object.keys(previews).sort()) {
+      const [group, item] = name.includes(':') ? name.split(':') : ['components', name]
+      ;(g[group] ??= []).push(item)
+      // keep full name for lookup
+      g[group][g[group].length - 1] = name
     }
-    setMessages(prev => [...prev, newUserMessage])
-    
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ message: userMessage, session_id: sessionId })
-      })
-      
-      const data = await response.json()
-      
-      if (data.session_id) {
-        setSessionId(data.session_id)
-      }
-      
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: data.response,
-        timestamp: new Date(),
-        tools_used: data.tools_used
-      }
-      setMessages(prev => [...prev, assistantMessage])
-    } catch (err) {
-      const errorMessage: ChatMessage = {
-        role: 'assistant',
-        content: `Error: ${err instanceof Error ? err.message : 'Failed to send message'}`,
-        timestamp: new Date()
-      }
-      setMessages(prev => [...prev, errorMessage])
-    } finally {
-      setIsLoading(false)
-    }
-  }
+    return g
+  }, [previews])
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
-  }
+  const label = (name: string) => (name.includes(':') ? name.split(':')[1] : name)
 
-  const clearChat = () => {
-    setMessages([])
-    setSessionId(null)
-  }
-
-  if (viewMode === 'grid') {
+  let colorIdx = 0
+  const renderItem = (name: string) => {
+    const meta = TYPE_META[name.split(':')[0]] ?? TYPE_META.components
+    const color = COLORS[colorIdx++ % COLORS.length]
     return (
-      <div className="min-h-screen bg-background flex flex-col">
-        <header className="border-b bg-card/50 backdrop-blur px-4 py-3 flex items-center justify-between sticky top-0 z-10">
-          <h1 className="text-lg font-semibold">Component Gallery</h1>
-          <button onClick={() => setViewMode('single')} className="p-2 hover:bg-accent rounded transition">
-            <LayoutGrid className="w-5 h-5" />
-          </button>
-        </header>
-        <div className="flex-1 overflow-auto p-4 grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Object.entries(previews).map(([name, Component]) => (
-            <div key={name} className="border rounded-lg p-4 bg-card">
-              <h3 className="text-sm font-medium mb-2 truncate">{name}</h3>
-              <div className="transform scale-75 transform-origin-top-left h-64 overflow-hidden">
-                <Component />
-              </div>
+      <button
+        key={name}
+        onClick={() => setSelected(name)}
+        className={cn('library-item', selected === name && 'selected')}
+      >
+        <span className={cn('item-icon', `tone-${meta.color ?? color}`)}>
+          <meta.icon size={14} />
+        </span>
+        <span>{label(name)}</span>
+        <span className="item-state">Ready</span>
+      </button>
+    )
+  }
+
+  return (
+    <aside className="sidebar left-panel">
+      <div className="brand-row">
+        <LogoMark />
+        <div>
+          <div className="brand-name">live / studio</div>
+          <div className="brand-meta">private workspace</div>
+        </div>
+      </div>
+      <div className="sidebar-label">Preview library</div>
+      <div className="library-search"><Search size={14} /><span>{Object.keys(previews).length} pieces</span><kbd>⌘ K</kbd></div>
+      <div className="library-list">
+        {(['components', 'layout', 'sections'] as const).map((group) => (
+          <div key={group}>
+            <div className="group-heading" onClick={() => toggle(group)}>
+              <ChevronDown className={cn('chevron', !open[group] && '-rotate-90')} size={14} />
+              <span style={{ textTransform: 'capitalize' }}>{group}</span>
+              <span className="count">{String(groups[group]?.length ?? 0).padStart(2, '0')}</span>
+            </div>
+            {open[group] && (groups[group] ?? []).map(renderItem)}
+          </div>
+        ))}
+      </div>
+      <div className="sidebar-bottom">
+        <button><History size={15} /> Version history</button>
+        <button><Settings2 size={15} /> Workspace settings</button>
+      </div>
+    </aside>
+  )
+}
+
+function PreviewCanvas({
+  previews, selected, device, setDevice, view, setSelected,
+}: {
+  previews: Record<string, React.ComponentType>
+  selected: string
+  device: Device
+  setDevice: (d: Device) => void
+  view: ViewMode
+  setSelected: (v: string) => void
+}) {
+  return (
+    <section className="preview-column">
+      <div className="preview-toolbar">
+        <div className="breadcrumbs">
+          <ArrowLeft size={14} /><span>Preview</span><ChevronRight size={13} />
+          <strong>{selected === '__page__' ? 'Full page' : (selected.includes(':') ? selected.split(':')[1] : selected)}</strong>
+        </div>
+        <div className="toolbar-actions">
+          <div className="device-toggle">
+            {([['desktop', Monitor], ['tablet', Tablet], ['mobile', Smartphone]] as const).map(([name, Icon]) => (
+              <button key={name} aria-label={name} onClick={() => setDevice(name)} className={cn(device === name && 'active')}>
+                <Icon size={15} />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="canvas-wrap">
+        <div className={cn('device-frame', `device-${device}`)}>
+          <div className="frame-top">
+            <span className="traffic"><i /><i /><i /></span>
+            <span className="frame-url">preview.local / {(selected ?? 'page').toLowerCase().replace(':', ' / ')}</span>
+            <span className="frame-dots">•••</span>
+          </div>
+          <PreviewContent previews={previews} selected={selected} view={view} setSelected={setSelected} />
+        </div>
+      </div>
+      <div className="preview-footer">
+        <span><span className="live-dot" /> Live preview connected</span>
+        <span>Vite HMR · hot reload</span>
+      </div>
+    </section>
+  )
+}
+
+function PreviewContent({
+  previews, selected, view, setSelected,
+}: {
+  previews: Record<string, React.ComponentType>
+  selected: string
+  view: ViewMode
+  setSelected: (v: string) => void
+}) {
+  if (view === 'grid') {
+    return (
+      <div className="frame-real">
+        <div className="grid-stage" style={{ height: 'auto', minHeight: '100%', background: 'transparent' }}>
+          {Object.keys(previews).sort().map((name) => (
+            <div key={name} className={cn('grid-card', selected === name && 'selected')} onClick={() => setSelected(name)}>
+              <div className="grid-card-bar" />
+              <strong>{name.includes(':') ? name.split(':')[1] : name}</strong>
+              <span>{name.split(':')[0]}</span>
             </div>
           ))}
         </div>
@@ -134,241 +193,317 @@ function App() {
     )
   }
 
-  if (viewMode === 'page') {
-    const sectionOrder = ['layout:Header', 'sections:Hero', 'sections:Features', 'sections:Pricing', 'sections:Testimonials', 'sections:FAQ', 'layout:Footer']
+  if (view === 'page' || selected === '__page__') {
+    const order = ['layout:Header', 'sections:Hero', 'sections:Features', 'layout:Footer']
     return (
-      <div className="min-h-screen bg-background flex flex-col">
-        <header className="border-b bg-card/50 backdrop-blur px-4 py-3 flex items-center justify-between sticky top-0 z-10">
-          <h1 className="text-lg font-semibold">Page View</h1>
-          <button onClick={() => setViewMode('single')} className="p-2 hover:bg-accent rounded transition">
-            <FileText className="w-5 h-5" />
-          </button>
-        </header>
-        <div className="flex-1 overflow-auto w-full">
-          {sectionOrder.map((name) => {
-            const Component = previews[name]
-            if (!Component) return null
-            return <div key={name} className="w-full"><Component /></div>
-          })}
-        </div>
+      <div className="page-stack">
+        {order.map((name) => {
+          const C = previews[name]
+          return C ? <C key={name} /> : null
+        })}
       </div>
     )
   }
 
-  // Single view with chat sidebar
-  const Component = previewComponent ? previews[previewComponent] : null
-
-  return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Top Bar */}
-      <header className="border-b bg-card/50 backdrop-blur px-4 py-3 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setSidebarOpen(!sidebarOpen)} 
-            className="p-2 hover:bg-accent rounded transition lg:hidden"
-          >
-            <MessageSquare className="w-5 h-5" />
-          </button>
-          <h1 className="text-lg font-semibold">Live Design Studio</h1>
-          <div className="flex items-center gap-2 border-l pl-4 ml-2">
-            <select 
-              value={viewMode} 
-              onChange={(e) => setViewMode(e.target.value as 'single' | 'grid' | 'page')}
-              className="bg-background border rounded px-2 py-1 text-sm"
-            >
-              <option value="single">Single</option>
-              <option value="grid">Grid</option>
-              <option value="page">Page</option>
-            </select>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setChatSidebarOpen(!chatSidebarOpen)} className="p-2 hover:bg-accent rounded transition">
-            <MessageSquare className="w-5 h-5" />
-          </button>
-          <button onClick={clearChat} className="p-2 hover:bg-accent rounded transition" title="Clear chat">
-            <RotateCw className="w-5 h-5" />
-          </button>
-        </div>
-      </header>
-
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar - Component List */}
-        <aside className={cn(
-          'w-64 border-r bg-card/50 backdrop-blur flex flex-col transition-all duration-300',
-          sidebarOpen ? 'w-64' : 'w-0 overflow-hidden'
-        )}>
-          <div className="p-3 border-b flex items-center justify-between">
-            <h2 className="text-sm font-medium">Components</h2>
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden p-1">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-auto p-3 space-y-1">
-            {Object.keys(previews).length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-4">No components yet</p>
-            ) : (
-              Object.entries(previews).map(([name, _]) => (
-                <button
-                  key={name}
-                  onClick={() => {
-                    setPreviewComponent(name)
-                    setViewMode('single')
-                  }}
-                  className={cn(
-                    'w-full text-left px-3 py-2 rounded text-sm transition hover:bg-accent',
-                    previewComponent === name ? 'bg-primary text-primary-foreground' : ''
-                  )}
-                >
-                  {name}
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
-        {/* Main Preview Area */}
-        <main className="flex-1 flex flex-col min-w-0">
-          {/* Preview Toolbar */}
-          <div className="border-b bg-card/50 backdrop-blur px-4 py-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">
-                {previewComponent ? previewComponent : 'Select a component or start chatting'}
-              </span>
-              {previewComponent && (
-                <button 
-                  onClick={() => setPreviewComponent(null)} 
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <select 
-                value={viewMode} 
-                onChange={(e) => setViewMode(e.target.value as 'single' | 'grid' | 'page')}
-                className="bg-background border rounded px-2 py-1 text-sm"
-              >
-                <option value="single">Single</option>
-                <option value="grid">Grid</option>
-                <option value="page">Page</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Preview Content */}
-          <div className="flex-1 overflow-auto p-4 relative">
-            {error && (
-              <div className="fixed top-4 right-4 z-50 bg-destructive text-destructive-foreground p-4 rounded-lg shadow-lg max-w-md mb-4">
-                <pre className="text-sm">{error}</pre>
-              </div>
-            )}
-
-            {Component ? (
-              <div className="w-full max-w-5xl mx-auto">
-                <Component />
-              </div>
-            ) : (
-              <div className="flex items-center justify-center min-h-[60vh] text-muted-foreground">
-                <div className="text-center">
-                  <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <h2 className="text-xl font-medium mb-2">Live Design Studio</h2>
-                  <p>Select a component from the sidebar or ask the agent to create one.</p>
-                  <p className="text-sm mt-2">Available previews: {Object.keys(previews).join(', ') || 'none yet'}</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </main>
-
-        {/* Right Sidebar - Chat with Hermes Agent */}
-        <aside className={cn(
-          'w-96 border-l bg-card/50 backdrop-blur flex flex-col transition-all duration-300',
-          chatSidebarOpen ? 'w-96' : 'w-0 overflow-hidden'
-        )}>
-          <div className="p-3 border-b flex items-center justify-between">
-            <h2 className="text-sm font-medium">Hermes Agent</h2>
-            <button onClick={() => setChatSidebarOpen(false)} className="lg:hidden p-1">
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-          
-          {/* Messages */}
-          <div className="flex-1 overflow-auto p-3 space-y-4" ref={messagesEndRef}>
-            {messages.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">
-                <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p className="text-sm">Start a conversation with Hermes Agent</p>
-                <p className="text-xs mt-1">Ask for UI components, changes, or previews</p>
-              </div>
-            ) : (
-              messages.map((msg, idx) => (
-                <div key={idx} className={cn('flex gap-3', msg.role === 'user' ? 'flex-row-reverse' : '')}>
-                  <div 
-                    className={cn(
-                      'w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-medium',
-                      msg.role === 'user' 
-                        ? 'bg-primary text-primary-foreground' 
-                        : 'bg-muted text-muted-foreground'
-                    )}
-                  >
-                    {msg.role === 'user' ? 'U' : 'H'}
-                  </div>
-                  <div className={cn(
-                    'max-w-[80%] prose prose-sm dark:prose-invert',
-                    msg.role === 'user' ? 'text-right' : ''
-                  )}>
-                    <div className={cn(
-                      'p-3 rounded-lg',
-                      msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                    )}>
-                      <pre className="whitespace-pre-wrap text-sm">{msg.content}</pre>
-                    </div>
-                    {msg.tools_used && msg.tools_used.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {msg.tools_used.map((tool, i) => (
-                          <span key={i} className="text-xs px-2 py-0.5 bg-accent rounded">🔧 {tool}</span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="text-xs text-muted-foreground mt-1 text-right">
-                      {msg.timestamp.toLocaleTimeString()}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input */}
-          <div className="p-3 border-t">
-            <div className="flex gap-2">
-              <textarea
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask Hermes to create a component, modify the preview..."
-                className="flex-1 min-h-[60px] max-h-32 px-3 py-2 border rounded bg-background resize-none text-sm"
-                disabled={isLoading}
-              />
-              <button
-                onClick={sendMessage}
-                disabled={isLoading || !inputValue.trim()}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 transition"
-              >
-                <Send className="w-5 h-5" />
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1 text-center">
-              Press Enter to send, Shift+Enter for new line
-            </p>
-          </div>
-        </aside>
+  const C = previews[selected]
+  if (!C) {
+    return (
+      <div className="frame-real centered">
+        <div className="stage-label">Nothing selected</div>
+        <p style={{ color: '#7c7d75', fontSize: 12 }}>Pick a piece from the library, or ask the agent to create one.</p>
       </div>
+    )
+  }
+  const isSection = selected.startsWith('sections:') || selected.startsWith('layout:')
+  return (
+    <div className={cn('frame-real', !isSection && 'centered')}>
+      {!isSection && <div className="stage-label">{selected.replace(':', ' / ')}</div>}
+      <C />
     </div>
   )
 }
 
-export default App
+function ActivityPanel({
+  messages, activities, isLoading, prompt, setPrompt, onSend, onClear,
+}: {
+  messages: ChatMessage[]
+  activities: ActivityEvent[]
+  isLoading: boolean
+  prompt: string
+  setPrompt: (v: string) => void
+  onSend: () => void
+  onClear: () => void
+}) {
+  const [tab, setTab] = useState<'inbox' | 'activity'>('inbox')
+  const endRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, tab])
+
+  return (
+    <aside className="activity-panel right-panel">
+      <div className="panel-heading">
+        <div>
+          <div className="eyebrow-label">AGENT ACTIVITY</div>
+          <h2>{tab === 'inbox' ? 'Agent inbox' : 'Building in real time'}</h2>
+        </div>
+        <div className={cn('agent-status', !isLoading && 'idle')}>
+          <span className="pulse" /> {isLoading ? 'Working' : 'Idle'}
+        </div>
+      </div>
+      <div className="inbox-tabs" role="tablist">
+        <button className={cn(tab === 'inbox' && 'active')} onClick={() => setTab('inbox')} role="tab">
+          <MessageSquareText size={13} /> Inbox <span>{messages.length}</span>
+        </button>
+        <button className={cn(tab === 'activity' && 'active')} onClick={() => setTab('activity')} role="tab">
+          <History size={13} /> Activity
+        </button>
+      </div>
+
+      {tab === 'inbox' ? (
+        <div className="chat-inbox" role="tabpanel">
+          {messages.length === 0 && (
+            <div className="chat-message agent">
+              <div className="chat-avatar"><Sparkles size={12} /></div>
+              <div className="chat-bubble">
+                <div className="chat-meta">Agent</div>
+                <p>Ready. Describe a component or section and I'll build it live in the workspace.</p>
+              </div>
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={cn('chat-message', m.role === 'user' ? 'user' : 'agent')}>
+              <div className="chat-avatar">{m.role === 'user' ? 'U' : <Sparkles size={12} />}</div>
+              <div className="chat-bubble">
+                <div className="chat-meta">{m.role === 'user' ? 'You' : 'Agent'} <time>{m.timestamp.toLocaleTimeString()}</time></div>
+                <p>{m.content}</p>
+                {m.tools_used && m.tools_used.length > 0 && (
+                  <div className="tools">{m.tools_used.map((t, j) => <span key={j}>{t}</span>)}</div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={endRef} />
+        </div>
+      ) : (
+        <div className="activity-feed">
+          {activities.length === 0 && <div className="activity-copy" style={{ color: '#676770', fontSize: 11, padding: '12px 0' }}>No activity yet — file changes will appear here live.</div>}
+          {activities.map((a, i) => (
+            <div className={cn('activity', i === activities.length - 1 && 'current')} key={i}>
+              <div className={cn('activity-marker', a.state)}>{a.state === 'success' ? <Check size={11} /> : a.state === 'working' ? <span /> : <History size={11} />}</div>
+              <div className="activity-copy">
+                <div className="activity-title">{a.title}{i === activities.length - 1 && <span className="now">now</span>}</div>
+                <div className="activity-detail">{a.detail}</div>
+              </div>
+              <time>{a.time}</time>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="prompt-box">
+        <div className="prompt-label"><WandSparkles size={14} /> Ask for a change</div>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Message the agent..."
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              onSend()
+            }
+          }}
+        />
+        <div className="prompt-actions">
+          <span><kbd>↵</kbd> to send</span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <button aria-label="Clear chat" onClick={onClear} style={{ background: 'transparent', border: '1px solid #34343a', color: '#8b8a92', width: 'auto', padding: '0 8px', borderRadius: 4 }}><X size={13} /></button>
+            <button aria-label="Send prompt" disabled={!prompt.trim() || isLoading} onClick={onSend}><Send size={15} /></button>
+          </span>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+function Login({ onLogin }: { onLogin: (token: string) => void }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true); setError('')
+    try {
+      const body = new URLSearchParams({ username, password })
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `Login failed (${res.status})`)
+      const data = await res.json()
+      localStorage.setItem(TOKEN_KEY, data.access_token)
+      onLogin(data.access_token)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="login-shell">
+      <form className="login-card" onSubmit={submit}>
+        <div className="brand-row" style={{ padding: '0 0 16px' }}>
+          <LogoMark />
+          <div>
+            <div className="brand-name">live / studio</div>
+            <div className="brand-meta">private workspace</div>
+          </div>
+        </div>
+        {error && <div className="login-error">{error}</div>}
+        <label>Username</label>
+        <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
+        <label>Password</label>
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+        <button type="submit" disabled={busy || !username || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      </form>
+    </div>
+  )
+}
+
+export default function App() {
+  const [authed, setAuthed] = useState<boolean | null>(null)
+  const [selected, setSelectedRaw] = useState<string>('sections:Hero')
+  const [device, setDevice] = useState<Device>('desktop')
+  const [view, setView] = useState<ViewMode>('single')
+  const [showLeft, setShowLeft] = useState(true)
+  const [showRight, setShowRight] = useState(true)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [activities, setActivities] = useState<ActivityEvent[]>([])
+  const [prompt, setPrompt] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [sessionId, setSessionId] = useState<string | null>(null)
+
+  const setSelected = (name: string) => { setSelectedRaw(name); setView('single') }
+
+  // Auto-discover preview components
+  const previews = useMemo(() => {
+    const modules = (import.meta as any).glob('./**/*.preview.tsx', { eager: true })
+    const discovered: Record<string, React.ComponentType> = {}
+    for (const [path, mod] of Object.entries(modules)) {
+      const m = mod as { default?: React.ComponentType }
+      const name = path.replace('./', '').replace('.preview.tsx', '').replace(/\//g, ':')
+      if (m.default) discovered[name] = m.default
+    }
+    return discovered
+  }, [])
+
+  // auth check
+  useEffect(() => {
+    const token = getToken()
+    if (!token) { setAuthed(false); return }
+    api('/api/auth/me').then((r) => setAuthed(r.ok)).catch(() => setAuthed(false))
+  }, [])
+
+  // WebSocket: live activity feed
+  useEffect(() => {
+    if (!authed) return
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    const token = getToken()
+    const ws = new WebSocket(`${proto}://${location.host}/ws${token ? `?token=${token}` : ''}`)
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data)
+        if (msg.type === 'file_changed') {
+          pushActivity({ title: `${msg.payload.action === 'edit' ? 'Editing' : msg.payload.action === 'delete' ? 'Deleted' : 'Wrote'} ${msg.payload.path}`, detail: 'hot reload triggered', state: 'working' })
+        } else if (msg.type === 'git_commit') {
+          pushActivity({ title: 'Version saved', detail: msg.payload.message ?? msg.payload.sha, state: 'saved' })
+        }
+      } catch { /* ignore */ }
+    }
+    return () => ws.close()
+  }, [authed])
+
+  const pushActivity = (a: Omit<ActivityEvent, 'time'>) =>
+    setActivities((prev) => [...prev.slice(-19), { ...a, time: new Date().toLocaleTimeString('en-GB') }])
+
+  const sendMessage = async () => {
+    const text = prompt.trim()
+    if (!text || isLoading) return
+    setPrompt('')
+    setIsLoading(true)
+    setMessages((prev) => [...prev, { role: 'user', content: text, timestamp: new Date() }])
+    try {
+      const res = await api('/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: text, session_id: sessionId }),
+      })
+      const data = await res.json()
+      if (data.session_id) setSessionId(data.session_id)
+      setMessages((prev) => [...prev, {
+        role: 'assistant',
+        content: data.response ?? 'No response',
+        timestamp: new Date(),
+        tools_used: data.tools_used,
+      }])
+      pushActivity({ title: 'Agent responded', detail: 'chat turn complete', state: 'success' })
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'failed'}`, timestamp: new Date() }])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const clearChat = () => { setMessages([]); setSessionId(null) }
+
+  if (authed === null) return null
+  if (!authed) return <Login onLogin={() => setAuthed(true)} />
+
+  const viewLabel = view === 'single' ? 'Single view' : view === 'grid' ? 'Grid view' : 'Page view'
+
+  return (
+    <main className="studio-shell">
+      <header className="topbar">
+        <div className="topbar-left">
+          <button className="mobile-toggle" onClick={() => setShowLeft(!showLeft)}><PanelLeft size={16} /></button>
+          <button className="project-title"><span className="project-status" /> <span>Live Design Studio</span></button>
+          <span className="slash">/</span>
+          <span className="project-subtitle">Design system</span>
+        </div>
+        <div className="topbar-center">
+          <div className="view-switcher">
+            <button onClick={() => setView('single')} className={cn(view === 'single' && 'active')}><Eye size={14} /> Single</button>
+            <button onClick={() => setView('grid')} className={cn(view === 'grid' && 'active')}><Grid2X2 size={14} /> Grid</button>
+            <button onClick={() => { setView('page'); setSelectedRaw('__page__') }} className={cn(view === 'page' && 'active')}><LayoutTemplate size={14} /> Page</button>
+          </div>
+        </div>
+        <div className="topbar-right">
+          <span className="saved"><Check size={13} /> {Object.keys(previews).length} pieces</span>
+          <button className="share-button" onClick={() => { localStorage.removeItem(TOKEN_KEY); setAuthed(false) }}>Sign out</button>
+          <button className="mobile-toggle" onClick={() => setShowRight(!showRight)}><PanelRight size={16} /></button>
+        </div>
+      </header>
+      <div className="workspace">
+        <div className={cn('panel-slot', !showLeft && 'hidden-panel')}>
+          <Sidebar previews={previews} selected={selected} setSelected={setSelected} />
+        </div>
+        <div className="main-stage">
+          <div className="stage-topline"><span>{viewLabel}</span><span>⌘ ⇧ F <Maximize2 size={12} /></span></div>
+          <PreviewCanvas previews={previews} selected={selected} device={device} setDevice={setDevice} view={view} setSelected={setSelected} />
+        </div>
+        <div className={cn('panel-slot right-slot', !showRight && 'hidden-panel')}>
+          <ActivityPanel
+            messages={messages}
+            activities={activities}
+            isLoading={isLoading}
+            prompt={prompt}
+            setPrompt={setPrompt}
+            onSend={sendMessage}
+            onClear={clearChat}
+          />
+        </div>
+      </div>
+    </main>
+  )
+}

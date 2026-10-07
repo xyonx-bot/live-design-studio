@@ -14,6 +14,8 @@ export default defineConfig({
     port: 5173,
     hmr: {
       clientPort: 443,
+      protocol: 'wss',
+      host: 'live-preview.joyverse.fun',
     },
     allowedHosts: true,
     watch: {

@@ -1,58 +1,55 @@
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 from app.core.config import get_settings
 from app.core.security import verify_password, get_password_hash, create_access_token, decode_access_token
-from app.models.schemas import Token, UserCreate, FileItem, FileContent, FileWrite, FileEdit, CommitRequest, CommitResponse, ComponentPreview, ScreenshotRequest, ErrorResponse
+from app.models.schemas import Token, FileItem, FileContent, FileWrite, FileEdit, CommitRequest, CommitResponse
 from app.services.workspace import workspace_service
 from app.services.websocket import manager
 import os
 import httpx
-import json
 
 settings = get_settings()
 router = APIRouter()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-# In-memory user store (replace with DB in production)
-users_db = {}
+# ── Auth: single admin user from env, JWT-issued. No open registration. ──────
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid token")
     username = payload.get("sub")
-    if username not in users_db:
+    if username != ADMIN_USERNAME:
         raise HTTPException(status_code=401, detail="User not found")
-    return users_db[username]
+    return {"username": username}
 
-@router.post("/auth/register", response_model=Token)
-async def register(user: UserCreate):
-    if user.username in users_db:
-        raise HTTPException(status_code=400, detail="Username already exists")
-    hashed_password = get_password_hash(user.password)
-    users_db[user.username] = {"username": user.username, "hashed_password": hashed_password}
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/auth/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = users_db.get(form_data.username)
-    if not user or not verify_password(form_data.password, user["hashed_password"]):
+    if not ADMIN_PASSWORD:
+        raise HTTPException(status_code=503, detail="Auth not configured on server")
+    if form_data.username != ADMIN_USERNAME or form_data.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    access_token = create_access_token(data={"sub": form_data.username})
+    access_token = create_access_token(data={"sub": ADMIN_USERNAME})
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @router.get("/auth/me")
 async def me(current_user: dict = Depends(get_current_user)):
     return {"username": current_user["username"]}
 
-# File operations
+
+# ── File operations ───────────────────────────────────────────────────────────
 @router.get("/files", response_model=List[FileItem])
 async def list_files(path: str = "", current_user: dict = Depends(get_current_user)):
     return workspace_service.list_files(path)
+
 
 @router.get("/files/content", response_model=FileContent)
 async def read_file(path: str, current_user: dict = Depends(get_current_user)):
@@ -62,6 +59,7 @@ async def read_file(path: str, current_user: dict = Depends(get_current_user)):
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+
 @router.post("/files", response_model=FileContent)
 async def write_file(file: FileWrite, current_user: dict = Depends(get_current_user)):
     try:
@@ -70,6 +68,7 @@ async def write_file(file: FileWrite, current_user: dict = Depends(get_current_u
         return {"path": path, "content": file.content}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.patch("/files", response_model=FileContent)
 async def edit_file(file: FileEdit, current_user: dict = Depends(get_current_user)):
@@ -81,6 +80,7 @@ async def edit_file(file: FileEdit, current_user: dict = Depends(get_current_use
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @router.delete("/files")
 async def delete_file(path: str, current_user: dict = Depends(get_current_user)):
     success = workspace_service.delete_file(path)
@@ -88,21 +88,25 @@ async def delete_file(path: str, current_user: dict = Depends(get_current_user))
         await manager.broadcast_event("file_changed", {"path": path, "action": "delete"})
     return {"success": success}
 
-# Components
+
+# ── Components ────────────────────────────────────────────────────────────────
 @router.get("/components", response_model=List[str])
 async def list_components(current_user: dict = Depends(get_current_user)):
     return workspace_service.list_components()
 
-# Git
+
+# ── Git ───────────────────────────────────────────────────────────────────────
 @router.post("/git/commit", response_model=CommitResponse)
 async def commit(commit_req: CommitRequest, current_user: dict = Depends(get_current_user)):
     result = workspace_service.commit(commit_req.message)
     await manager.broadcast_event("git_commit", {"sha": result.sha, "message": result.message})
     return result
 
+
 @router.get("/git/history", response_model=List[CommitResponse])
 async def git_history(limit: int = 50, current_user: dict = Depends(get_current_user)):
     return workspace_service.get_history(limit)
+
 
 @router.post("/git/checkout")
 async def git_checkout(sha: str, current_user: dict = Depends(get_current_user)):
@@ -111,84 +115,95 @@ async def git_checkout(sha: str, current_user: dict = Depends(get_current_user))
         await manager.broadcast_event("git_checkout", {"sha": sha})
     return {"success": success}
 
-# WebSocket
+
+# ── WebSocket (token required) ────────────────────────────────────────────────
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, token: str = None):
-    # For simplicity, accept without token validation in WS
-    # In production, validate token from query param
+async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
+    payload = decode_access_token(token) if token else None
+    if payload is None or payload.get("sub") != ADMIN_USERNAME:
+        await websocket.close(code=4401)
+        return
     await manager.connect(websocket)
     try:
         while True:
             data = await websocket.receive_json()
-            # Echo back or handle messages
             await manager.send_personal_message({"type": "ack", "payload": data}, websocket)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
 
-# Hermes Agent Chat Endpoint
-# This proxies chat messages to Hermes Agent and returns the response
-HERMES_AGENT_URL = os.getenv("HERMES_AGENT_URL", "http://172.19.0.1:9119")
+# ── Hermes Agent chat proxy ───────────────────────────────────────────────────
+# Hermes api_server is OpenAI-compatible: POST /v1/chat/completions with a
+# Bearer API_SERVER_KEY. Same machine, no cookie login, no fake /api/auth/login.
+HERMES_AGENT_URL = os.getenv("HERMES_AGENT_URL", "http://172.19.0.1:8644").rstrip("/")
+HERMES_API_KEY = os.getenv("HERMES_API_KEY", "")
+HERMES_MODEL = os.getenv("HERMES_MODEL", "hermes-agent")
 
-class ChatMessage(BaseModel):
+SYSTEM_PROMPT = (
+    "You are the build agent inside Live Design Studio, a live-design tool. "
+    "The user describes UI components/sections; you create or edit them in the Vite workspace. "
+    "Workspace layout: src/components/*.tsx, src/sections/*.tsx, src/layout/*.tsx, each with a "
+    "matching *.preview.tsx wrapper that renders the component standalone. "
+    "Always create both the component file and its .preview.tsx file. "
+    "Use Tailwind classes and the cn() helper from src/lib/utils. Be concise in replies."
+)
+
+
+class ChatMessageIn(BaseModel):
     message: str
     session_id: Optional[str] = None
+    history: Optional[List[dict]] = None
+
 
 class ChatResponse(BaseModel):
     response: str
     session_id: Optional[str] = None
     tools_used: List[str] = []
 
+
+# Per-session conversation history (OpenAI clients resend history each turn;
+# we keep server-side history keyed by session_id so the browser stays thin).
+chat_sessions: dict[str, List[dict]] = {}
+
+
 @router.post("/chat", response_model=ChatResponse)
-async def chat_with_agent(chat: ChatMessage, current_user: dict = Depends(get_current_user)):
-    """Send a message to Hermes Agent and get the response"""
+async def chat_with_agent(chat: ChatMessageIn, current_user: dict = Depends(get_current_user)):
+    session_id = chat.session_id or os.urandom(8).hex()
+    history = chat_sessions.setdefault(session_id, [])
+    history.append({"role": "user", "content": chat.message})
+
+    headers = {"Content-Type": "application/json"}
+    if HERMES_API_KEY:
+        headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
+
+    payload = {
+        "model": HERMES_MODEL,
+        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history[-40:],
+        "stream": False,
+    }
+
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            # Hermes Agent chat endpoint (adjust based on actual Hermes API)
-            response = await client.post(
-                f"{HERMES_AGENT_URL}/api/chat",
-                json={
-                    "message": chat.message,
-                    "session_id": chat.session_id
-                },
-                headers={"Content-Type": "application/json"}
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract tools used from response if available
-            tools_used = data.get("tools_used", [])
-            
-            return ChatResponse(
-                response=data.get("response", data.get("message", "")),
-                session_id=data.get("session_id"),
-                tools_used=tools_used
-            )
-    except httpx.HTTPError as e:
-        # Fallback: return a helpful error message
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(f"{HERMES_AGENT_URL}/v1/chat/completions", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+        reply = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        history.append({"role": "assistant", "content": reply})
+        return ChatResponse(response=reply or "(empty response)", session_id=session_id, tools_used=[])
+    except httpx.HTTPStatusError as e:
         return ChatResponse(
-            response=f"Error connecting to Hermes Agent: {str(e)}. Make sure Hermes Agent is running and accessible at {HERMES_AGENT_URL}",
-            session_id=chat.session_id,
-            tools_used=[]
+            response=f"Hermes error {e.response.status_code}: {e.response.text[:300]}",
+            session_id=session_id,
         )
-    except Exception as e:
+    except httpx.HTTPError as e:
         return ChatResponse(
-            response=f"Unexpected error: {str(e)}",
-            session_id=chat.session_id,
-            tools_used=[]
+            response=f"Cannot reach Hermes at {HERMES_AGENT_URL}: {e}",
+            session_id=session_id,
         )
 
 
-@router.get("/chat/history")
-async def get_chat_history(session_id: str, current_user: dict = Depends(get_current_user)):
-    """Get chat history from Hermes Agent"""
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"{HERMES_AGENT_URL}/api/chat/history",
-                params={"session_id": session_id}
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Error fetching chat history: {str(e)}")
+@router.post("/chat/reset")
+async def reset_chat(session_id: str, current_user: dict = Depends(get_current_user)):
+    chat_sessions.pop(session_id, None)
+    return {"success": True}

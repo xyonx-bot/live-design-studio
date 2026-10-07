@@ -1,5 +1,4 @@
 import { Features } from './Features'
-import { Card, CardContent } from '@/components/Card'
 import { Zap, Shield, Globe, Code, Rocket, BarChart } from 'lucide-react'
 
 const features = [
