@@ -283,6 +283,8 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
         if HERMES_API_KEY:
             headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
         try:
+            # Persist the user's turn immediately so a refresh / reload doesn't lose it.
+            canvases_service.append_history(canvas_id, "user", body.message, image_url=body.image_url)
             async with httpx.AsyncClient(timeout=600.0) as client:
                 resp = await client.post(f"{HERMES_AGENT_URL}/v1/chat/completions",
                                          json={"model": model,
@@ -292,7 +294,6 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
                 resp.raise_for_status()
                 data = resp.json()
             reply = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-            canvases_service.append_history(canvas_id, "user", body.message)
             canvases_service.append_history(canvas_id, "assistant", reply)
             _jobs[job_id] = {**_jobs[job_id], "status": "done", "response": reply or "(empty response)"}
         except Exception as e:

@@ -140,6 +140,8 @@
 .chat-bubble p { color: #a09fa6; font-size: 11px; line-height: 1.5; margin: 7px 0 0; white-space: pre-wrap; word-break: break-word; }
 .chat-bubble .tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .chat-bubble .tools span { font-size: 9px; color: #7cc4ed; background: #7cc4ed15; border: 1px solid #7cc4ed30; padding: 1px 5px; border-radius: 3px; }
+.chat-image { display: block; margin-top: 8px; }
+.chat-image img { max-width: 200px; max-height: 160px; border-radius: 4px; border: 1px solid #303039; display: block; }
 .activity-feed { margin-top: 18px; display: flex; flex-direction: column; overflow: auto; flex: 1 1 auto; min-height: 0; }
 .activity { min-height: 67px; display: grid; grid-template-columns: 19px minmax(0, 1fr) auto; gap: 9px; position: relative; }
 .activity:not(:last-child)::before { content: ''; position: absolute; left: 8px; top: 19px; bottom: -5px; width: 1px; background: #303038; }

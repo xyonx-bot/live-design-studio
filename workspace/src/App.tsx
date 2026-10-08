@@ -62,6 +62,7 @@ interface ChatMessage {
   content: string
   timestamp: Date
   tools_used?: string[]
+  image_url?: string
 }
 
 interface ActivityEvent {
@@ -81,7 +82,8 @@ const saveCanvas = (id: string) => localStorage.setItem(CANVAS_KEY, id)
 async function api(path: string, init: RequestInit = {}) {
   const token = getToken()
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    // let the browser set the multipart boundary for FormData uploads
+    ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     ...(init.headers as Record<string, string>),
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -485,6 +487,11 @@ function ActivityPanel({
               <div className="chat-bubble">
                 <div className="chat-meta">{m.role === 'user' ? 'You' : 'Agent'} <time>{m.timestamp.toLocaleTimeString()}</time></div>
                 <p>{m.content}</p>
+                {m.image_url && (
+                  <a href={m.image_url} target="_blank" rel="noreferrer" className="chat-image">
+                    <img src={m.image_url} alt="attachment" />
+                  </a>
+                )}
                 {m.tools_used && m.tools_used.length > 0 && (
                   <div className="tools">{m.tools_used.map((t, j) => <span key={j}>{t}</span>)}</div>
                 )}
@@ -713,7 +720,8 @@ export default function App() {
       const r = await api(`/api/canvases/${encodeURIComponent(id)}/history`)
       if (!r.ok) return
       const data = await r.json()
-      messagesRef.current[id] = (data.history ?? []).map((h: any) => ({ role: h.role, content: h.content, timestamp: new Date(h.timestamp) }))
+      const hist = data.history ?? []
+      messagesRef.current[id] = hist.map((m: any) => ({ role: m.role, content: m.content, timestamp: new Date(m.timestamp), image_url: m.image_url }))
       if (data.session_id) sessionsRef.current[id] = data.session_id
       if (data.model) setCurrentModel(data.model)
       setMessageTick((t) => t + 1)

@@ -140,9 +140,12 @@ def load_history(canvas_id: str) -> List[dict]:
     return []
 
 
-def append_history(canvas_id: str, role: str, content: str) -> None:
+def append_history(canvas_id: str, role: str, content: str, image_url: Optional[str] = None) -> None:
     hist = load_history(canvas_id)
-    hist.append({"role": role, "content": content, "timestamp": datetime.utcnow().isoformat()})
+    entry = {"role": role, "content": content, "timestamp": datetime.utcnow().isoformat()}
+    if image_url:
+        entry["image_url"] = image_url
+    hist.append(entry)
     _history_path(canvas_id).write_text(json.dumps(hist, indent=2))
 
 
