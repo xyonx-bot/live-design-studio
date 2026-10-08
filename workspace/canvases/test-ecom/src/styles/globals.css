@@ -1,0 +1,17 @@
+/* design tokens for this canvas — edit here, pieces inherit */
+:root {
+  --background: #ffffff;
+  --foreground: #17181c;
+  --card: #ffffff;
+  --card-foreground: #17181c;
+  --primary: #1a2410;
+  --primary-foreground: #b9ed46;
+  --muted: #f1f0ea;
+  --muted-foreground: #6d6d75;
+  --accent: #b9ed46;
+  --accent-foreground: #17200e;
+  --border: #e0dcd0;
+  --radius: 6px;
+}
+* { border-color: var(--border); }
+section, .piece-root { font-family: system-ui, -apple-system, Inter, sans-serif; }

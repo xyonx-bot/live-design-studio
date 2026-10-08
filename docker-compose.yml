@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile
     container_name: livepreview_api
     volumes:
-      - workspace-data:/workspace
+      - /home/ubuntu/live-preview/workspace:/workspace
     environment:
       - WORKSPACE_PATH=/workspace
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile
     container_name: livepreview_workspace
     volumes:
-      - workspace-data:/app
+      - /home/ubuntu/live-preview/workspace:/app
       - /app/node_modules
     environment:
       - VITE_API_URL=https://live-preview.joyverse.fun/api
@@ -40,7 +40,7 @@ services:
       dockerfile: Dockerfile
     container_name: livepreview_screenshotter
     volumes:
-      - workspace-data:/workspace:ro
+      - /home/ubuntu/live-preview/workspace:/workspace:ro
     networks:
       - joyverse_main_network
     restart: unless-stopped
@@ -48,12 +48,8 @@ services:
       - .env
 
 volumes:
-  workspace-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /home/ubuntu/live-preview/workspace
+  # no named volumes; all paths are bind-mounted from the host
+  {}
 
 networks:
   joyverse_main_network:
