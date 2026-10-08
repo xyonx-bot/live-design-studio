@@ -65,6 +65,11 @@ class WorkspaceService:
         target = self._resolve_path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+        # Touch tailwind.config so Vite regenerates the Tailwind CSS and picks
+        # up any new utility classes the piece uses.
+        tw_cfg = self.workspace_path / "tailwind.config.js"
+        if tw_cfg.exists():
+            tw_cfg.touch()
         return str(target.relative_to(self.workspace_path))
     
     def edit_file(self, path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
@@ -80,6 +85,9 @@ class WorkspaceService:
                 raise ValueError("Old string not found in file")
             new_content = content.replace(old_string, new_string, 1)
         target.write_text(new_content, encoding="utf-8")
+        tw_cfg = self.workspace_path / "tailwind.config.js"
+        if tw_cfg.exists():
+            tw_cfg.touch()
         return str(target.relative_to(self.workspace_path))
     
     def delete_file(self, path: str) -> bool:
@@ -87,6 +95,9 @@ class WorkspaceService:
         target = self._resolve_path(path)
         if target.exists():
             target.unlink()
+            tw_cfg = self.workspace_path / "tailwind.config.js"
+            if tw_cfg.exists():
+                tw_cfg.touch()
             return True
         return False
     
