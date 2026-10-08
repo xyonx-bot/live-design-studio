@@ -1,5 +1,5 @@
 import { Header } from './Header'
-import { Button } from '@/components/Button'
+import { Button } from '../components/Button'
 
 export default function HeaderPreview() {
   return (

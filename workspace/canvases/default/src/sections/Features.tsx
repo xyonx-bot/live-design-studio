@@ -1,6 +1,6 @@
 import { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
-import { Card, CardContent } from '@/components/Card'
+import { Card, CardContent } from '../components/Card'
 
 interface Feature {
   title: string

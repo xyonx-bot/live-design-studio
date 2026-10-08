@@ -56,6 +56,8 @@ const COLORS = ['lime', 'blue', 'orange', 'purple', 'pink', 'slate']
  * Load a canvas's preview modules dynamically from its own folder.
  * Works for .tsx/.jsx via Vite transform, and raw .html via srcdoc iframe.
  */
+const PREVIEW_GLOBS = (import.meta as any).glob('/canvases/*/src/*/*.preview.{tsx,jsx}') as Record<string, () => Promise<{ default?: React.ComponentType }>>
+
 function useCanvasPreviews(canvasId: string) {
   const [previews, setPreviews] = useState<Record<string, React.ComponentType>>({})
   const [htmlPieces, setHtmlPieces] = useState<Record<string, string>>({})
@@ -82,14 +84,21 @@ function useCanvasPreviews(canvasId: string) {
         const pieces: { name: string; group: string; file: string; kind: 'tsx' | 'jsx' | 'html' }[] = await res.json()
         for (const p of pieces) {
           const key = `${p.group}:${p.name}`
-          try {
-            if (p.kind === 'html') {
-              const r = await fetch(`${base}/${p.group}/${p.file}`)
+          if (p.kind === 'html') {
+            try {
+              const r = await fetch(`/@fs/app/canvases/${canvasId}/src/${p.group}/${p.file}`)
               if (r.ok) htmls[key] = await r.text()
-            } else {
-              const mod = await import(/* @vite-ignore */ `${base}/${p.group}/${p.file}`)
-              if (mod?.default) found[key] = mod.default
-            }
+            } catch (e) { console.warn('html piece fetch failed', key, e) }
+            continue
+          }
+          // vite static-glob: imports go through its transform pipeline (browser
+          // can't import() raw TSX)
+          const globKey = `/canvases/${canvasId}/src/${p.group}/${p.file}`
+          const loader = PREVIEW_GLOBS[globKey]
+          if (!loader) { console.warn('not in glob', globKey); continue }
+          try {
+            const mod = await loader()
+            if (mod?.default) found[key] = mod.default
           } catch (e) {
             console.warn('preview load failed', key, e)
           }
@@ -370,19 +379,34 @@ function EmptyStage({ text }: { text: string }) {
 }
 
 function ActivityPanel({
-  messages, activities, isLoading, prompt, setPrompt, onSend, onClear,
+  messages, activities, isLoading, loadingStartedAt, prompt, setPrompt, onSend, onClear, onRetry,
+  currentModel, onModelChange,
 }: {
   messages: ChatMessage[]
   activities: ActivityEvent[]
   isLoading: boolean
+  loadingStartedAt?: number | null
   prompt: string
   setPrompt: (v: string) => void
   onSend: () => void
   onClear: () => void
+  onRetry: () => void
+  currentModel: string
+  onModelChange: (m: string) => Promise<void>
 }) {
   const [tab, setTab] = useState<'inbox' | 'activity'>('inbox')
   const endRef = useRef<HTMLDivElement>(null)
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, tab])
+
+  // elapsed timer while a job runs
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!isLoading) return
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [isLoading])
+  const elapsed = loadingStartedAt ? Math.max(0, Math.round((Date.now() - loadingStartedAt) / 1000)) : 0
+  const longWait = elapsed > 45
 
   return (
     <aside className="activity-panel right-panel">
@@ -392,7 +416,7 @@ function ActivityPanel({
           <h2>{tab === 'inbox' ? 'Agent inbox' : 'Building in real time'}</h2>
         </div>
         <div className={cn('agent-status', !isLoading && 'idle')}>
-          <span className="pulse" /> {isLoading ? 'Working' : 'Idle'}
+          <span className="pulse" /> {isLoading ? `Working · ${elapsed}s` : 'Idle'}
         </div>
       </div>
       <div className="inbox-tabs" role="tablist">
@@ -447,6 +471,11 @@ function ActivityPanel({
 
       <div className="prompt-box">
         <div className="prompt-label"><WandSparkles size={14} /> Ask for a change</div>
+        {isLoading && longWait && (
+          <div className="long-wait-note">
+            Agent's still on it ({elapsed}s) — free models can take a minute. You can keep browsing; the reply lands in the inbox when done.
+          </div>
+        )}
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
@@ -459,14 +488,70 @@ function ActivityPanel({
           }}
         />
         <div className="prompt-actions">
+          <span className="model-pill" title="chat model"><ModelPicker currentModel={currentModel} onChange={onModelChange} /></span>
           <span><kbd>↵</kbd> to send</span>
           <span style={{ display: 'flex', gap: 6 }}>
+            {isLoading && <button aria-label="Retry" onClick={onRetry} title="Retry last message" style={{ background: 'transparent', border: '1px solid #34343a', color: '#8b8a92', width: 'auto', padding: '0 8px', borderRadius: 4 }}>Retry</button>}
             <button aria-label="Clear chat" onClick={onClear} style={{ background: 'transparent', border: '1px solid #34343a', color: '#8b8a92', width: 'auto', padding: '0 8px', borderRadius: 4 }}><X size={13} /></button>
             <button aria-label="Send prompt" disabled={!prompt.trim() || isLoading} onClick={onSend}><Send size={15} /></button>
           </span>
         </div>
       </div>
     </aside>
+  )
+}
+
+function ModelPicker({ currentModel, onChange }: { currentModel: string; onChange: (m: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [options, setOptions] = useState<string[]>([])
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    const r = await api('/api/models')
+    if (r.ok) {
+      const d = await r.json()
+      setOptions(d.models ?? [])
+      setDraft(d.current ?? '')
+    }
+  }
+  useEffect(() => { if (open) { void load(); setDraft(currentModel) } }, [open]) // eslint-disable-line
+
+  const apply = async (m: string) => {
+    if (!m.trim()) return
+    setBusy(true); setError('')
+    try {
+      // validate against api_server list when available
+      if (options.length && !options.includes(m)) {
+        setError(`not in api_server list`)
+        setBusy(false)
+        return
+      }
+      await onChange(m.trim())
+      setOpen(false)
+    } catch (e) { setError(String(e)) } finally { setBusy(false) }
+  }
+
+  return (
+    <span className="model-picker">
+      <button type="button" onClick={() => setOpen(!open)} title="Set chat model">{currentModel || 'model'}</button>
+      {open && (
+        <div className="model-menu">
+          <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="model id, e.g. hermes-agent"
+            onKeyDown={(e) => { if (e.key === 'Enter') apply(draft); if (e.key === 'Escape') setOpen(false) }} />
+          {error && <div className="model-error">{error}</div>}
+          {options.length > 0 && (
+            <div className="model-list">
+              {options.slice(0, 30).map((o) => (
+                <button key={o} type="button" className={cn(o === currentModel && 'active')} onClick={() => apply(o)}>{o}</button>
+              ))}
+            </div>
+          )}
+          <button disabled={busy || !draft.trim()} onClick={() => apply(draft)}>{busy ? 'Saving…' : 'Use model'}</button>
+        </div>
+      )}
+    </span>
   )
 }
 
@@ -530,6 +615,8 @@ export default function App() {
   const [prompt, setPrompt] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [showNewCanvas, setShowNewCanvas] = useState(false)
+  const [currentModel, setCurrentModel] = useState<string>('')
+  const lastMessageRef = useRef<Record<string, string>>({})
 
   const { previews, htmlPieces, reload } = useCanvasPreviews(canvasId)
 
@@ -547,54 +634,77 @@ export default function App() {
   }
   void messageTick // rerender trigger
 
-  // load canvas list once authed; auto-restore the saved canvas's session
+  // load canvas list once authed
   useEffect(() => {
     if (!authed) return
     api('/api/canvases').then(async (r) => {
       if (!r.ok) return
       const list = await r.json()
       setCanvases(list)
-      // if saved canvas no longer exists, fall back to first
-      if (!list.find((c: any) => c.id === canvasId) && list[0]) {
-        setCanvasId(list[0].id)
-        saveCanvas(list[0].id)
+      // fresh load lands on default unless a saved canvas exists in the list
+      let next = getSavedCanvas()
+      if (!list.find((c: any) => c.id === next)) {
+        next = list.find((c: any) => c.id === 'default')?.id ?? list[0]?.id ?? 'default'
       }
-      // restore session ids + history for the current canvas
-      const cur = list.find((c: any) => c.id === (list.find((c: any) => c.id === canvasId) ? canvasId : list[0]?.id))
-      if (cur?.session_id && !sessionsRef.current[cur.id]) {
-        sessionsRef.current[cur.id] = cur.session_id
-        const h = await api(`/api/canvases/${encodeURIComponent(cur.id)}/history`)
-        if (h.ok) messagesRef.current[cur.id] = await h.json()
-        setMessageTick((t) => t + 1)
-      }
+      switchCanvas(next, /* skip save */ true)
     }).catch(() => {})
   }, [authed]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const setSelected = (name: string) => { setSelectedRaw(name); setView('single') }
   const jumpToPiece = (name: string) => { setSelectedRaw(name); setView('single') }
 
-  const switchCanvas = (id: string) => {
-    if (id === canvasId) return
-    setCanvasId(id)
-    saveCanvas(id)
-    setSelectedRaw('')
-    setActivities([])
-    // lazy-load that canvas's session + history on first switch
-    if (!sessionsRef.current[id]) {
-      api(`/api/canvases/${encodeURIComponent(id)}/meta`).then(async (r) => {
-        if (!r.ok) return
-        const meta = await r.json()
-        if (meta.session_id) {
-          sessionsRef.current[id] = meta.session_id
-          const h = await api(`/api/canvases/${encodeURIComponent(id)}/history`)
-          if (h.ok) messagesRef.current[id] = await h.json()
-          setMessageTick((t) => t + 1)
-        }
-      }).catch(() => {})
-    }
+  // ── per-canvas session/status ────────────────────────────────────────────
+  const loadingFor = useRef<Record<string, { jobId: string | null; startedAt: number }>>({})
+  const [, setStatusTick] = useState(0)
+  const loadStatus = loadingFor.current[canvasId] // {jobId, startedAt} | undefined
+
+  // resume any running job + restore history whenever a canvas activates
+  const hydrateCanvas = async (id: string) => {
+    try {
+      const r = await api(`/api/canvases/${encodeURIComponent(id)}/history`)
+      if (!r.ok) return
+      const data = await r.json()
+      messagesRef.current[id] = (data.history ?? []).map((h: any) => ({ role: h.role, content: h.content, timestamp: new Date(h.timestamp) }))
+      if (data.session_id) sessionsRef.current[id] = data.session_id
+      if (data.model) setCurrentModel(data.model)
+      setMessageTick((t) => t + 1)
+      // resume polling an in-flight job
+      if (data.running_job && loadingFor.current[id]?.jobId !== data.running_job.job_id) {
+        loadingFor.current[id] = { jobId: data.running_job.job_id, startedAt: Date.parse(data.running_job.started_at + 'Z') || Date.now() }
+        setIsLoading(true)
+        setStatusTick((t) => t + 1)
+        pollJob(id, data.running_job.job_id)
+      } else {
+        setIsLoading(!!loadingFor.current[id]?.jobId)
+      }
+    } catch { /* ignore */ }
   }
 
-  const newCanvas = () => setShowNewCanvas(true)
+  const pollJob = async (cid: string, jobId: string) => {
+    const deadline = Date.now() + 10 * 60 * 1000
+    let delay = 1500
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, delay))
+      const jr = await api(`/api/chat/jobs/${jobId}`)
+      if (!jr.ok) { delay = Math.min(delay * 1.5, 8000); continue }
+      const job = await jr.json()
+      if (job.status === 'done' || job.status === 'error') {
+        const reply = job.response || '(no response)'
+        setMessagesFor(cid, (m) => [...m, { role: 'assistant', content: reply, timestamp: new Date() }])
+        loadingFor.current[cid] = { jobId: null, startedAt: 0 }
+        if (cid === canvasId) { setIsLoading(false); reload() }
+        pushActivity({ title: 'Agent responded', detail: 'chat turn complete', state: 'success' })
+        return
+      }
+      delay = Math.min(delay * 1.3, 6000)
+      if (cid === canvasId) reload() // live pieces may land while job runs
+      setStatusTick((t) => t + 1) // keep timer ticking for the Working · Ns label
+    }
+    // timed out waiting
+    setMessagesFor(cid, (m) => [...m, { role: 'assistant', content: 'Agent is still working after 10 minutes — check back shortly, or press Retry below.', timestamp: new Date() }])
+    loadingFor.current[cid] = { jobId: null, startedAt: 0 }
+    if (cid === canvasId) setIsLoading(false)
+  }
 
   const confirmNewCanvas = async (name: string) => {
     const res = await api('/api/canvases', { method: 'POST', body: JSON.stringify({ name: name || 'New canvas' }) })
@@ -604,6 +714,16 @@ export default function App() {
       switchCanvas(c.id)
     }
   }
+
+  const switchCanvas = (id: string, save = true) => {
+    if (id === canvasId) { void hydrateCanvas(id); return }
+    setCanvasId(id)
+    if (save) saveCanvas(id)
+    setSelectedRaw('')
+    setActivities([])
+    void hydrateCanvas(id)
+  }
+  const newCanvas = () => setShowNewCanvas(true)
 
   // auth check
   useEffect(() => {
@@ -646,11 +766,12 @@ export default function App() {
   const sendMessage = async () => {
     const text = prompt.trim()
     if (!text || isLoading) return
+    lastMessageRef.current[canvasId] = text
     setPrompt('')
     setIsLoading(true)
+    loadingFor.current[canvasId] = { jobId: null, startedAt: Date.now() }
     setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text, timestamp: new Date() }])
     try {
-      // start a background chat job; poll for the reply (Cloudflare kills >100s requests)
       const res = await api('/api/chat', {
         method: 'POST',
         body: JSON.stringify({ message: text, session_id: sessionId, canvas_id: canvasId }),
@@ -658,38 +779,32 @@ export default function App() {
       const start = await res.json()
       const jobId = start.session_id
       if (!jobId) throw new Error(start.response || 'no job id')
-
-      const deadline = Date.now() + 10 * 60 * 1000
-      let reply = ''
-      let delay = 1500
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, delay))
-        const jr = await api(`/api/chat/jobs/${jobId}`)
-        if (!jr.ok) { delay = Math.min(delay * 1.5, 8000); continue }
-        const job = await jr.json()
-        if (job.status === 'done') { reply = job.response; break }
-        if (job.status === 'error') { reply = job.response; break }
-        delay = Math.min(delay * 1.3, 6000)
-        reload() // live pieces may appear while the job runs
-      }
-
-      sessionsRef.current[canvasId] = sessionId ?? jobId
-      setMessagesFor(canvasId, (m) => [...m, {
-        role: 'assistant',
-        content: reply || 'Timed out waiting for the agent.',
-        timestamp: new Date(),
-      }])
-      pushActivity({ title: 'Agent responded', detail: 'chat turn complete', state: 'success' })
-      reload()
+      sessionsRef.current[canvasId] = jobId
+      loadingFor.current[canvasId] = { jobId, startedAt: Date.now() }
+      void pollJob(canvasId, jobId)
     } catch (err) {
-      setMessagesFor(canvasId, (m) => [...m, { role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'failed'}`, timestamp: new Date() }])
-    } finally {
+      loadingFor.current[canvasId] = { jobId: null, startedAt: 0 }
       setIsLoading(false)
+      setMessagesFor(canvasId, (m) => [...m, { role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'failed'}`, timestamp: new Date() }])
     }
   }
 
+  const setModel = async (m: string) => {
+    await api(`/api/canvases/${encodeURIComponent(canvasId)}/model`, { method: 'POST', body: JSON.stringify({ model: m }) })
+    setCurrentModel(m)
+  }
+
+  const retry = () => {
+    const last = lastMessageRef.current[canvasId]
+    if (!last || isLoading) return
+    setPrompt(last)
+    // send on next tick after prompt update
+    setTimeout(sendMessage, 0)
+  }
+
   const clearChat = async () => {
-    if (sessionId) await api('/api/chat/reset', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }).catch(() => {})
+    const sid = sessionsRef.current[canvasId]
+    if (sid) await api('/api/chat/reset', { method: 'POST', body: JSON.stringify({ session_id: sid, canvas_id: canvasId }) }).catch(() => {})
     messagesRef.current[canvasId] = []
     sessionsRef.current[canvasId] = null
     setMessageTick((t) => t + 1)
@@ -741,10 +856,14 @@ export default function App() {
             messages={messages}
             activities={activities}
             isLoading={isLoading}
+            loadingStartedAt={loadStatus?.startedAt ?? null}
             prompt={prompt}
             setPrompt={setPrompt}
             onSend={sendMessage}
             onClear={clearChat}
+            onRetry={retry}
+            currentModel={currentModel}
+            onModelChange={setModel}
           />
         </div>
       </div>

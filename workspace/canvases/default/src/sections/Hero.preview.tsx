@@ -1,5 +1,5 @@
 import { Hero } from './Hero'
-import { Card, CardContent } from '@/components/Card'
+import { Card, CardContent } from '../components/Card'
 
 export default function HeroPreview() {
   return (

@@ -50,6 +50,10 @@ class CanvasCreate(BaseModel):
     name: str
 
 
+class CanvasModel(BaseModel):
+    model: str
+
+
 @router.get("/canvases")
 async def list_canvases(user: dict = Depends(get_current_user)):
     return canvases_service.list_canvases()
@@ -87,7 +91,43 @@ async def canvas_pieces(canvas_id: str, user: dict = Depends(get_current_user)):
 @router.get("/canvases/{canvas_id}/history")
 async def canvas_history(canvas_id: str, user: dict = Depends(get_current_user)):
     try:
-        return canvases_service.load_history(canvas_id)
+        hist = canvases_service.load_history(canvas_id)
+        meta = canvases_service.get_canvas(canvas_id)
+        running = [j for j in _jobs.values() if j.get("canvas_id") == canvas_id and j.get("status") == "running"]
+        return {"history": hist, "session_id": meta.get("session_id"), "model": meta.get("model"),
+                "running_job": running[-1] if running else None}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
+
+
+@router.get("/models")
+async def models(user: dict = Depends(get_current_user)):
+    """Models exposed by the Hermes api_server (for the picker validation)."""
+    headers = {"Authorization": f"Bearer {HERMES_API_KEY}"} if HERMES_API_KEY else {}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(f"{HERMES_AGENT_URL}/v1/models", headers=headers)
+            r.raise_for_status()
+            data = r.json()
+        return {"models": [m.get("id") for m in data.get("data", [])], "current": HERMES_AGENT_MODEL}
+    except Exception as e:
+        return {"models": [], "error": str(e), "current": HERMES_AGENT_MODEL}
+
+
+@router.post("/canvases/{canvas_id}/model")
+async def set_canvas_model(canvas_id: str, body: CanvasModel, user: dict = Depends(get_current_user)):
+    headers = {"Authorization": f"Bearer {HERMES_API_KEY}"} if HERMES_API_KEY else {}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(f"{HERMES_AGENT_URL}/v1/models", headers=headers)
+            if r.ok:
+                valid = {m.get("id") for m in r.json().get("data", [])}
+                if valid and body.model not in valid:
+                    raise HTTPException(status_code=400, detail=f"Model '{body.model}' not in api_server /v1/models")
+    except httpx.HTTPError:
+        pass  # accept anyway if api_server unreachable
+    try:
+        return canvases_service.set_model(canvas_id, body.model)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Canvas not found")
 
@@ -189,6 +229,7 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
 HERMES_AGENT_URL = os.getenv("HERMES_AGENT_URL", "http://172.19.0.1:8644").rstrip("/")
 HERMES_API_KEY = os.getenv("HERMES_API_KEY", "")
 HERMES_MODEL = os.getenv("HERMES_MODEL", "hermes-agent")
+HERMES_AGENT_MODEL = HERMES_MODEL  # default; per-canvas override via set_model
 
 
 class ChatIn(BaseModel):
@@ -215,32 +256,37 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
         raise HTTPException(status_code=404, detail="Canvas not found")
 
     job_id = uuid.uuid4().hex[:12]
-    _jobs[job_id] = {"status": "running", "canvas_id": canvas_id, "response": None}
+    _jobs[job_id] = {"job_id": job_id, "status": "running", "canvas_id": canvas_id, "response": None,
+                     "started_at": __import__("datetime").datetime.utcnow().isoformat()}
 
     async def run():
         history = canvases_service.load_history(canvas_id)
-        messages = [{"role": "system", "content": build_prompt(canvas_id)}] + [
-            {"role": h["role"], "content": h["content"]} for h in history[-39:]
-        ] + [{"role": "user", "content": body.message}]
+        model = canvases_service.get_model(canvas_id) or HERMES_AGENT_MODEL
         headers = {"Content-Type": "application/json"}
         if HERMES_API_KEY:
             headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
         try:
             async with httpx.AsyncClient(timeout=600.0) as client:
                 resp = await client.post(f"{HERMES_AGENT_URL}/v1/chat/completions",
-                                         json={"model": HERMES_MODEL, "messages": messages, "stream": False},
+                                         json={"model": model, "messages": messages_payload(canvas_id, body.message, history), "stream": False},
                                          headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
             reply = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
             canvases_service.append_history(canvas_id, "user", body.message)
             canvases_service.append_history(canvas_id, "assistant", reply)
-            _jobs[job_id] = {"status": "done", "canvas_id": canvas_id, "response": reply or "(empty response)"}
+            _jobs[job_id] = {**_jobs[job_id], "status": "done", "response": reply or "(empty response)"}
         except Exception as e:
-            _jobs[job_id] = {"status": "error", "canvas_id": canvas_id, "response": f"{type(e).__name__}: {e}"}
+            _jobs[job_id] = {**_jobs[job_id], "status": "error", "response": f"{type(e).__name__}: {e}"}
 
     asyncio.create_task(run())
     return ChatOut(response="", session_id=job_id, canvas_id=canvas_id, tools_used=[])
+
+
+def messages_payload(canvas_id: str, new_message: str, history: List[dict]) -> List[dict]:
+    return [{"role": "system", "content": build_prompt(canvas_id)}] + [
+        {"role": h["role"], "content": h["content"]} for h in history[-39:]
+    ] + [{"role": "user", "content": new_message}]
 
 
 # in-memory job store (jobs are short-lived anyway)

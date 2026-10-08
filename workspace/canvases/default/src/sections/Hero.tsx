@@ -1,6 +1,6 @@
 import { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/Button'
+import { Button } from '../components/Button'
 
 interface HeroProps extends React.HTMLAttributes<HTMLElement> {
   headline: string

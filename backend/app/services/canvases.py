@@ -107,6 +107,17 @@ def set_session(canvas_id: str, session_id: Optional[str]) -> dict:
     return meta
 
 
+def set_model(canvas_id: str, model: Optional[str]) -> dict:
+    meta = get_canvas(canvas_id)
+    meta["model"] = model
+    _write_meta(canvas_id, meta)
+    return meta
+
+
+def get_model(canvas_id: str) -> Optional[str]:
+    return _read_meta(canvas_id).get("model")
+
+
 def _history_path(canvas_id: str) -> Path:
     return _dir(canvas_id) / "chat.json"
 
