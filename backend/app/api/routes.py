@@ -84,6 +84,17 @@ async def archive_canvas(canvas_id: str, user: dict = Depends(get_current_user))
         raise HTTPException(status_code=404, detail="Canvas not found")
 
 
+@router.delete("/canvases/{canvas_id}")
+async def delete_canvas_route(canvas_id: str, user: dict = Depends(get_current_user)):
+    try:
+        canvases_service.delete_canvas(canvas_id)
+        return {"success": True, "id": canvas_id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # FileNotFoundError
+        raise HTTPException(status_code=404, detail="Canvas not found")
+
+
 @router.get("/canvases/{canvas_id}/pieces")
 async def canvas_pieces(canvas_id: str, user: dict = Depends(get_current_user)):
     try:
