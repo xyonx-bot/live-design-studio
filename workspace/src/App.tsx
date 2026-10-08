@@ -29,7 +29,10 @@ interface ActivityEvent {
 
 /* ── auth ──────────────────────────────────────────────────────── */
 const TOKEN_KEY = 'lds_token'
+const CANVAS_KEY = 'lds_canvas'
 const getToken = () => localStorage.getItem(TOKEN_KEY)
+const getSavedCanvas = () => localStorage.getItem(CANVAS_KEY) || 'default'
+const saveCanvas = (id: string) => localStorage.setItem(CANVAS_KEY, id)
 
 async function api(path: string, init: RequestInit = {}) {
   const token = getToken()
@@ -49,30 +52,90 @@ const TYPE_META: Record<string, { icon: any; color: string }> = {
 }
 const COLORS = ['lime', 'blue', 'orange', 'purple', 'pink', 'slate']
 
+/**
+ * Load a canvas's preview modules dynamically from its own folder.
+ * Works for .tsx/.jsx via Vite transform, and raw .html via srcdoc iframe.
+ */
+function useCanvasPreviews(canvasId: string) {
+  const [previews, setPreviews] = useState<Record<string, React.ComponentType>>({})
+  const [htmlPieces, setHtmlPieces] = useState<Record<string, string>>({})
+
+  const load = async () => {
+    const base = `/canvases/${encodeURIComponent(canvasId)}/src`
+    const found: Record<string, React.ComponentType> = {}
+    const htmls: Record<string, string> = {}
+
+    // canvas-scoped stylesheet so each canvas has its own design tokens
+    const linkId = 'canvas-globals'
+    let link = document.getElementById(linkId) as HTMLLinkElement | null
+    if (!link) {
+      link = document.createElement('link')
+      link.id = linkId
+      link.rel = 'stylesheet'
+      document.head.appendChild(link)
+    }
+    link.href = `${base}/styles/globals.css?ts=${Date.now()}`
+
+    try {
+      const res = await api(`/api/canvases/${encodeURIComponent(canvasId)}/pieces`)
+      if (res.ok) {
+        const pieces: { name: string; group: string; file: string; kind: 'tsx' | 'jsx' | 'html' }[] = await res.json()
+        for (const p of pieces) {
+          const key = `${p.group}:${p.name}`
+          try {
+            if (p.kind === 'html') {
+              const r = await fetch(`${base}/${p.group}/${p.file}`)
+              if (r.ok) htmls[key] = await r.text()
+            } else {
+              const mod = await import(/* @vite-ignore */ `${base}/${p.group}/${p.file}`)
+              if (mod?.default) found[key] = mod.default
+            }
+          } catch (e) {
+            console.warn('preview load failed', key, e)
+          }
+        }
+      }
+    } catch { /* backend down */ }
+
+    setPreviews(found)
+    setHtmlPieces(htmls)
+  }
+
+  useEffect(() => { load() }, [canvasId])
+  return { previews, htmlPieces, reload: load }
+}
+
 function LogoMark() {
   return <div className="logo-mark"><span /><span /><span /><span /></div>
 }
 
 function Sidebar({
-  previews, selected, setSelected,
+  previews, htmlPreviews = {}, selected, setSelected,
 }: {
   previews: Record<string, React.ComponentType>
+  htmlPreviews?: Record<string, string>
   selected: string
   setSelected: (v: string) => void
 }) {
+  const allPreviews = useMemo(() => {
+    const merged: Record<string, React.ComponentType> = { ...previews }
+    for (const key of Object.keys(htmlPreviews)) {
+      if (!merged[key]) merged[key] = () => null // placeholder so it lists; render handled by PreviewContent
+    }
+    return merged
+  }, [previews, htmlPreviews])
+  const pieceTotal = Object.keys(allPreviews).length
   const [open, setOpen] = useState<Record<string, boolean>>({ components: true, layout: true, sections: true })
   const toggle = (key: string) => setOpen((v) => ({ ...v, [key]: !v[key] }))
 
   const groups = useMemo(() => {
     const g: Record<string, string[]> = { components: [], layout: [], sections: [] }
-    for (const name of Object.keys(previews).sort()) {
-      const [group, item] = name.includes(':') ? name.split(':') : ['components', name]
-      ;(g[group] ??= []).push(item)
-      // keep full name for lookup
-      g[group][g[group].length - 1] = name
+    for (const name of Object.keys(allPreviews).sort()) {
+      const [group] = name.includes(':') ? name.split(':') : ['components', name]
+      ;(g[group] ??= []).push(name)
     }
     return g
-  }, [previews])
+  }, [allPreviews])
 
   const label = (name: string) => (name.includes(':') ? name.split(':')[1] : name)
 
@@ -105,7 +168,7 @@ function Sidebar({
         </div>
       </div>
       <div className="sidebar-label">Preview library</div>
-      <div className="library-search"><Search size={14} /><span>{Object.keys(previews).length} pieces</span><kbd>⌘ K</kbd></div>
+      <div className="library-search"><Search size={14} /><span>{pieceTotal} pieces</span><kbd>⌘ K</kbd></div>
       <div className="library-list">
         {(['components', 'layout', 'sections'] as const).map((group) => (
           <div key={group}>
@@ -119,16 +182,17 @@ function Sidebar({
         ))}
       </div>
       <div className="sidebar-bottom">
-        <span style={{ color: '#51515a', fontSize: 10, padding: '4px 8px' }}>{Object.keys(previews).length} pieces in workspace</span>
+        <span style={{ color: '#51515a', fontSize: 10, padding: '4px 8px' }}>{pieceTotal} pieces in workspace</span>
       </div>
     </aside>
   )
 }
 
 function PreviewCanvas({
-  previews, selected, device, setDevice, view, setSelected,
+  previews, htmlPreviews = {}, selected, device, setDevice, view, setSelected,
 }: {
   previews: Record<string, React.ComponentType>
+  htmlPreviews?: Record<string, string>
   selected: string
   device: Device
   setDevice: (d: Device) => void
@@ -162,12 +226,12 @@ function PreviewCanvas({
             <span className="frame-url">{DEVICE_WIDTHS[device]}px{selected ? ` · ${label.toLowerCase()}` : ''}</span>
             <span className="frame-dots">•••</span>
           </div>
-          <PreviewContent previews={previews} selected={selected} view={view} setSelected={setSelected} device={device} />
+          <PreviewContent previews={previews} htmlPreviews={htmlPreviews} selected={selected} view={view} setSelected={setSelected} device={device} />
         </ResizableFrame>
       </div>
       <div className="preview-footer">
         <span><span className="live-dot" /> Live preview connected</span>
-        <span>{view === 'single' ? label : view === 'grid' ? `${Object.keys(previews).length} pieces` : 'Page view'}</span>
+        <span>{view === 'single' ? label : view === 'grid' ? `${Object.keys(previews).length + Object.keys(htmlPreviews).length} pieces` : 'Page view'}</span>
       </div>
     </section>
   )
@@ -217,23 +281,25 @@ function ResizableFrame({ device, children }: { device: Device; children: React.
 }
 
 function PreviewContent({
-  previews, selected, view, setSelected,
+  previews, htmlPreviews = {}, selected, view, setSelected,
 }: {
   previews: Record<string, React.ComponentType>
+  htmlPreviews?: Record<string, string>
   selected: string
   view: ViewMode
   setSelected: (v: string) => void
   device: Device
 }) {
+  const allNames = Object.keys({ ...previews, ...htmlPreviews }).sort()
+
   if (view === 'grid') {
-    const names = Object.keys(previews).sort()
     return (
       <div className="frame-real">
-        {names.length === 0 ? (
+        {allNames.length === 0 ? (
           <EmptyStage text="Nothing here yet — ask the agent to create your first piece." />
         ) : (
           <div className="grid-stage" style={{ height: 'auto', minHeight: '100%', background: 'transparent' }}>
-            {names.map((name) => (
+            {allNames.map((name) => (
               <div key={name} className={cn('grid-card', selected === name && 'selected')} onClick={() => setSelected(name)}>
                 <div className="grid-card-bar" />
                 <strong>{name.includes(':') ? name.split(':')[1] : name}</strong>
@@ -248,23 +314,20 @@ function PreviewContent({
 
   if (view === 'page' || selected === '__page__') {
     // Dynamic page order: headers first, then sections in library order, then footers.
-    const headers = Object.keys(previews).filter((n) => n.startsWith('layout:') && /header|nav/i.test(n)).sort()
-    const footers = Object.keys(previews).filter((n) => n.startsWith('layout:') && /footer/i.test(n)).sort()
-    const sections = Object.keys(previews).filter((n) => n.startsWith('sections:')).sort()
+    const names = allNames
+    const headers = names.filter((n) => n.startsWith('layout:') && /header|nav/i.test(n))
+    const footers = names.filter((n) => n.startsWith('layout:') && /footer/i.test(n))
+    const sections = names.filter((n) => n.startsWith('sections:'))
     const order = [...headers, ...sections, ...footers]
-    const any = order.some((n) => previews[n])
+    const any = order.length > 0
     return (
       <div className="page-stack">
-        {any ? order.map((name) => {
-          const C = previews[name]
-          return C ? <C key={name} /> : null
-        }) : <EmptyStage text="No sections yet — ask the agent for a hero, a features section, a footer…" />}
+        {any ? order.map((name) => <Piece key={name} name={name} previews={previews} htmlPreviews={htmlPreviews} inline />) : <EmptyStage text="No sections yet — ask the agent for a hero, a features section, a footer…" />}
       </div>
     )
   }
 
-  const C = previews[selected]
-  if (!C) return (
+  if (!selected) return (
     <div className="frame-real centered">
       <EmptyStage text="Pick a piece from the library, or ask the agent to create one." />
     </div>
@@ -273,9 +336,26 @@ function PreviewContent({
   return (
     <div className={cn('frame-real', !isSection && 'centered')}>
       {!isSection && <div className="stage-label">{selected.replace(':', ' / ')}</div>}
-      <C />
+      <Piece name={selected} previews={previews} htmlPreviews={htmlPreviews} />
     </div>
   )
+}
+
+function Piece({ name, previews, htmlPreviews = {}, inline }: { name: string; previews: Record<string, React.ComponentType>; htmlPreviews?: Record<string, string>; inline?: boolean }) {
+  const C = previews[name]
+  if (C) return <C />
+  const html = htmlPreviews[name]
+  if (html != null) {
+    return (
+      <iframe
+        title={name}
+        srcDoc={html}
+        style={{ width: '100%', height: inline ? 'auto' : '100%', minHeight: inline ? 120 : '100%', border: 0, background: '#fff', display: 'block' }}
+        sandbox="allow-same-origin"
+      />
+    )
+  }
+  return inline ? null : <EmptyStage text={`“${name.split(':')[1] ?? name}” isn't built yet — ask the agent to create it.`} />
 }
 
 function EmptyStage({ text }: { text: string }) {
@@ -440,31 +520,90 @@ function Login({ onLogin }: { onLogin: (token: string) => void }) {
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
+  const [canvasId, setCanvasId] = useState<string>(getSavedCanvas())
+  const [canvases, setCanvases] = useState<{ id: string; name: string; archived?: boolean }[]>([])
   const [selected, setSelectedRaw] = useState<string>('')
   const [device, setDevice] = useState<Device>('desktop')
   const [view, setView] = useState<ViewMode>('single')
   const [showLeft, setShowLeft] = useState(true)
   const [showRight, setShowRight] = useState(true)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [activities, setActivities] = useState<ActivityEvent[]>([])
   const [prompt, setPrompt] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [showNewCanvas, setShowNewCanvas] = useState(false)
+
+  const { previews, htmlPieces, reload } = useCanvasPreviews(canvasId)
+
+  // chat state scoped per canvas
+  const messagesRef = useRef<Record<string, ChatMessage[]>>({})
+  const sessionsRef = useRef<Record<string, string | null>>({})
+  const [messageTick, setMessageTick] = useState(0)
+  const messages = messagesRef.current[canvasId] ?? []
+  const sessionId = sessionsRef.current[canvasId] ?? null
+  const [activities, setActivities] = useState<ActivityEvent[]>([])
+
+  const setMessagesFor = (id: string, fn: (m: ChatMessage[]) => ChatMessage[]) => {
+    messagesRef.current[id] = fn(messagesRef.current[id] ?? [])
+    setMessageTick((t) => t + 1)
+  }
+  void messageTick // rerender trigger
+
+  // load canvas list once authed; auto-restore the saved canvas's session
+  useEffect(() => {
+    if (!authed) return
+    api('/api/canvases').then(async (r) => {
+      if (!r.ok) return
+      const list = await r.json()
+      setCanvases(list)
+      // if saved canvas no longer exists, fall back to first
+      if (!list.find((c: any) => c.id === canvasId) && list[0]) {
+        setCanvasId(list[0].id)
+        saveCanvas(list[0].id)
+      }
+      // restore session ids + history for the current canvas
+      const cur = list.find((c: any) => c.id === (list.find((c: any) => c.id === canvasId) ? canvasId : list[0]?.id))
+      if (cur?.session_id && !sessionsRef.current[cur.id]) {
+        sessionsRef.current[cur.id] = cur.session_id
+        const h = await api(`/api/canvases/${encodeURIComponent(cur.id)}/history`)
+        if (h.ok) messagesRef.current[cur.id] = await h.json()
+        setMessageTick((t) => t + 1)
+      }
+    }).catch(() => {})
+  }, [authed]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const setSelected = (name: string) => { setSelectedRaw(name); setView('single') }
   const jumpToPiece = (name: string) => { setSelectedRaw(name); setView('single') }
 
-  // Auto-discover preview components
-  const previews = useMemo(() => {
-    const modules = (import.meta as any).glob('./**/*.preview.tsx', { eager: true })
-    const discovered: Record<string, React.ComponentType> = {}
-    for (const [path, mod] of Object.entries(modules)) {
-      const m = mod as { default?: React.ComponentType }
-      const name = path.replace('./', '').replace('.preview.tsx', '').replace(/\//g, ':')
-      if (m.default) discovered[name] = m.default
+  const switchCanvas = (id: string) => {
+    if (id === canvasId) return
+    setCanvasId(id)
+    saveCanvas(id)
+    setSelectedRaw('')
+    setActivities([])
+    // lazy-load that canvas's session + history on first switch
+    if (!sessionsRef.current[id]) {
+      api(`/api/canvases/${encodeURIComponent(id)}/meta`).then(async (r) => {
+        if (!r.ok) return
+        const meta = await r.json()
+        if (meta.session_id) {
+          sessionsRef.current[id] = meta.session_id
+          const h = await api(`/api/canvases/${encodeURIComponent(id)}/history`)
+          if (h.ok) messagesRef.current[id] = await h.json()
+          setMessageTick((t) => t + 1)
+        }
+      }).catch(() => {})
     }
-    return discovered
-  }, [])
+  }
+
+  const newCanvas = () => setShowNewCanvas(true)
+
+  const confirmNewCanvas = async (name: string) => {
+    const res = await api('/api/canvases', { method: 'POST', body: JSON.stringify({ name: name || 'New canvas' }) })
+    if (res.ok) {
+      const c = await res.json()
+      setCanvases((prev) => [...prev, c])
+      switchCanvas(c.id)
+    }
+  }
 
   // auth check
   useEffect(() => {
@@ -473,7 +612,7 @@ export default function App() {
     api('/api/auth/me').then((r) => setAuthed(r.ok)).catch(() => setAuthed(false))
   }, [])
 
-  // WebSocket: live activity feed
+  // WebSocket: live activity feed + auto-jump to the touched piece
   useEffect(() => {
     if (!authed) return
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -484,18 +623,22 @@ export default function App() {
         const msg = JSON.parse(ev.data)
         if (msg.type === 'file_changed') {
           const p = msg.payload.path as string
-          pushActivity({ title: `${msg.payload.action === 'edit' ? 'Editing' : msg.payload.action === 'delete' ? 'Deleted' : 'Wrote'} ${p}`, detail: 'hot reload triggered', state: 'working' })
-          // Auto-jump the canvas to the piece the agent just touched
-          let m = p.match(/src\/(components|sections|layout)\/([^/]+)\.preview\.tsx$/)
-          if (m) jumpToPiece(`${m[1]}:${m[2]}`)
-          else if ((m = p.match(/src\/(components|sections|layout)\/([^./]+)\.tsx$/))) jumpToPiece(`${m[1]}:${m[2]}`)
+          // only react to the active canvas's files
+          const cv = p.match(/canvases\/([^/]+)\/src\/(components|sections|layout)\/([^/]+)\.preview\.tsx$/)
+            ?? p.match(/canvases\/([^/]+)\/src\/(components|sections|layout)\/([^./]+)\.(tsx|jsx|html)$/)
+          pushActivity({ title: `${msg.payload.action === 'edit' ? 'Editing' : msg.payload.action === 'delete' ? 'Deleted' : 'Wrote'} ${p.split('/').slice(-2).join('/')}`, detail: 'hot reload', state: 'working' })
+          if (cv && cv[1] === canvasId) {
+            jumpToPiece(`${cv[2]}:${cv[3]}`)
+            reload()
+          }
         } else if (msg.type === 'git_commit') {
           pushActivity({ title: 'Version saved', detail: msg.payload.message ?? msg.payload.sha, state: 'saved' })
+          reload()
         }
       } catch { /* ignore */ }
     }
     return () => ws.close()
-  }, [authed])
+  }, [authed, canvasId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pushActivity = (a: Omit<ActivityEvent, 'time'>) =>
     setActivities((prev) => [...prev.slice(-19), { ...a, time: new Date().toLocaleTimeString('en-GB') }])
@@ -505,34 +648,58 @@ export default function App() {
     if (!text || isLoading) return
     setPrompt('')
     setIsLoading(true)
-    setMessages((prev) => [...prev, { role: 'user', content: text, timestamp: new Date() }])
+    setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text, timestamp: new Date() }])
     try {
+      // start a background chat job; poll for the reply (Cloudflare kills >100s requests)
       const res = await api('/api/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: text, session_id: sessionId }),
+        body: JSON.stringify({ message: text, session_id: sessionId, canvas_id: canvasId }),
       })
-      const data = await res.json()
-      if (data.session_id) setSessionId(data.session_id)
-      setMessages((prev) => [...prev, {
+      const start = await res.json()
+      const jobId = start.session_id
+      if (!jobId) throw new Error(start.response || 'no job id')
+
+      const deadline = Date.now() + 10 * 60 * 1000
+      let reply = ''
+      let delay = 1500
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, delay))
+        const jr = await api(`/api/chat/jobs/${jobId}`)
+        if (!jr.ok) { delay = Math.min(delay * 1.5, 8000); continue }
+        const job = await jr.json()
+        if (job.status === 'done') { reply = job.response; break }
+        if (job.status === 'error') { reply = job.response; break }
+        delay = Math.min(delay * 1.3, 6000)
+        reload() // live pieces may appear while the job runs
+      }
+
+      sessionsRef.current[canvasId] = sessionId ?? jobId
+      setMessagesFor(canvasId, (m) => [...m, {
         role: 'assistant',
-        content: data.response ?? 'No response',
+        content: reply || 'Timed out waiting for the agent.',
         timestamp: new Date(),
-        tools_used: data.tools_used,
       }])
       pushActivity({ title: 'Agent responded', detail: 'chat turn complete', state: 'success' })
+      reload()
     } catch (err) {
-      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'failed'}`, timestamp: new Date() }])
+      setMessagesFor(canvasId, (m) => [...m, { role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'failed'}`, timestamp: new Date() }])
     } finally {
       setIsLoading(false)
     }
   }
 
-  const clearChat = () => { setMessages([]); setSessionId(null) }
+  const clearChat = async () => {
+    if (sessionId) await api('/api/chat/reset', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }).catch(() => {})
+    messagesRef.current[canvasId] = []
+    sessionsRef.current[canvasId] = null
+    setMessageTick((t) => t + 1)
+  }
 
   if (authed === null) return null
   if (!authed) return <Login onLogin={() => setAuthed(true)} />
 
   const viewLabel = view === 'single' ? 'Single view' : view === 'grid' ? 'Grid view' : 'Page view'
+  const pieceCount = Object.keys(previews).length + Object.keys(htmlPieces).length
 
   return (
     <main className="studio-shell">
@@ -541,7 +708,12 @@ export default function App() {
           <button className="mobile-toggle" onClick={() => setShowLeft(!showLeft)}><PanelLeft size={16} /></button>
           <button className="project-title"><span className="project-status" /> <span>Live Design Studio</span></button>
           <span className="slash">/</span>
-          <span className="project-subtitle">Design system</span>
+          <div className="canvas-switcher">
+            <select value={canvasId} onChange={(e) => switchCanvas(e.target.value)} title="Active canvas">
+              {canvases.filter((c) => !c.archived).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <button onClick={newCanvas} title="New canvas">+ New</button>
+          </div>
         </div>
         <div className="topbar-center">
           <div className="view-switcher">
@@ -551,18 +723,18 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-right">
-          <span className="saved"><Check size={13} /> {Object.keys(previews).length} pieces</span>
+          <span className="saved"><Check size={13} /> {pieceCount} pieces</span>
           <button className="share-button" onClick={() => { localStorage.removeItem(TOKEN_KEY); setAuthed(false) }}>Sign out</button>
           <button className="mobile-toggle" onClick={() => setShowRight(!showRight)}><PanelRight size={16} /></button>
         </div>
       </header>
       <div className="workspace">
         <div className={cn('panel-slot', !showLeft && 'hidden-panel')}>
-          <Sidebar previews={previews} selected={selected} setSelected={setSelected} />
+          <Sidebar previews={previews} htmlPreviews={htmlPieces} selected={selected} setSelected={setSelected} />
         </div>
         <div className="main-stage">
           <div className="stage-topline"><span>{viewLabel}</span><span>⌘ ⇧ F <Maximize2 size={12} /></span></div>
-          <PreviewCanvas previews={previews} selected={selected} device={device} setDevice={setDevice} view={view} setSelected={setSelected} />
+          <PreviewCanvas previews={previews} htmlPreviews={htmlPieces} selected={selected} device={device} setDevice={setDevice} view={view} setSelected={setSelected} />
         </div>
         <div className={cn('panel-slot right-slot', !showRight && 'hidden-panel')}>
           <ActivityPanel
@@ -576,6 +748,33 @@ export default function App() {
           />
         </div>
       </div>
+      {showNewCanvas && (
+        <NewCanvasModal onClose={() => setShowNewCanvas(false)} onCreate={confirmNewCanvas} />
+      )}
     </main>
+  )
+}
+
+function NewCanvasModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => Promise<void> }) {
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <h3>New canvas</h3>
+        <p className="modal-sub">Each canvas keeps its own pieces, chat and style tokens.</p>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Acme landing, NextBizStudio…"
+          onKeyDown={(e) => { if (e.key === 'Enter' && !busy) { setBusy(true); onCreate(name || 'New canvas').finally(onClose) } if (e.key === 'Escape') onClose() }}
+        />
+        <div className="modal-actions">
+          <button className="ghost" onClick={onClose}>Cancel</button>
+          <button disabled={busy} onClick={() => { setBusy(true); onCreate(name || 'New canvas').finally(onClose) }}>{busy ? 'Creating…' : 'Create canvas'}</button>
+        </div>
+      </div>
+    </div>
   )
 }

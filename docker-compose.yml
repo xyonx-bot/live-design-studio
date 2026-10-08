@@ -50,6 +50,11 @@ services:
 
 volumes:
   workspace-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/ubuntu/live-preview/workspace
 
 networks:
   joyverse_main_network:

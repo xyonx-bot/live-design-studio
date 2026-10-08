@@ -3,10 +3,12 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from typing import List, Optional
 from pydantic import BaseModel
 from app.core.config import get_settings
-from app.core.security import verify_password, get_password_hash, create_access_token, decode_access_token
+from app.core.security import verify_password, create_access_token, decode_access_token
 from app.models.schemas import Token, FileItem, FileContent, FileWrite, FileEdit, CommitRequest, CommitResponse
 from app.services.workspace import workspace_service
+from app.services import canvases as canvases_service
 from app.services.websocket import manager
+from app.agent_prompt import build_prompt
 import os
 import httpx
 
@@ -24,10 +26,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid token")
-    username = payload.get("sub")
-    if username != ADMIN_USERNAME:
+    if payload.get("sub") != ADMIN_USERNAME:
         raise HTTPException(status_code=401, detail="User not found")
-    return {"username": username}
+    return {"username": ADMIN_USERNAME}
 
 
 @router.post("/auth/login", response_model=Token)
@@ -36,63 +37,115 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(status_code=503, detail="Auth not configured on server")
     if form_data.username != ADMIN_USERNAME or form_data.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    access_token = create_access_token(data={"sub": ADMIN_USERNAME})
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": create_access_token(data={"sub": ADMIN_USERNAME}), "token_type": "bearer"}
 
 
 @router.get("/auth/me")
 async def me(current_user: dict = Depends(get_current_user)):
-    return {"username": current_user["username"]}
+    return current_user
 
 
-# ── File operations ───────────────────────────────────────────────────────────
+# ── Canvases ──────────────────────────────────────────────────────────────────
+class CanvasCreate(BaseModel):
+    name: str
+
+
+@router.get("/canvases")
+async def list_canvases(user: dict = Depends(get_current_user)):
+    return canvases_service.list_canvases()
+
+
+@router.post("/canvases")
+async def create_canvas(body: CanvasCreate, user: dict = Depends(get_current_user)):
+    return canvases_service.create_canvas(body.name)
+
+
+@router.get("/canvases/{canvas_id}/meta")
+async def canvas_meta(canvas_id: str, user: dict = Depends(get_current_user)):
+    try:
+        return canvases_service.get_canvas(canvas_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
+
+
+@router.post("/canvases/{canvas_id}/archive")
+async def archive_canvas(canvas_id: str, user: dict = Depends(get_current_user)):
+    try:
+        return canvases_service.set_archived(canvas_id, True)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
+
+
+@router.get("/canvases/{canvas_id}/pieces")
+async def canvas_pieces(canvas_id: str, user: dict = Depends(get_current_user)):
+    try:
+        return canvases_service.list_pieces(canvas_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
+
+
+@router.get("/canvases/{canvas_id}/history")
+async def canvas_history(canvas_id: str, user: dict = Depends(get_current_user)):
+    try:
+        return canvases_service.load_history(canvas_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
+
+
+# ── File operations (canvas-scoped: path relative to canvases/<id>/) ─────────
+def _canvas_rel(canvas_id: str, path: str) -> str:
+    return f"canvases/{canvas_id}/{path.lstrip('/')}"
+
+
 @router.get("/files", response_model=List[FileItem])
-async def list_files(path: str = "", current_user: dict = Depends(get_current_user)):
-    return workspace_service.list_files(path)
+async def list_files(path: str = "", canvas_id: str = "default", current_user: dict = Depends(get_current_user)):
+    return workspace_service.list_files(_canvas_rel(canvas_id, path))
 
 
 @router.get("/files/content", response_model=FileContent)
-async def read_file(path: str, current_user: dict = Depends(get_current_user)):
+async def read_file(path: str, canvas_id: str = "default", current_user: dict = Depends(get_current_user)):
     try:
-        content = workspace_service.read_file(path)
-        return {"path": path, "content": content}
+        return {"path": path, "content": workspace_service.read_file(_canvas_rel(canvas_id, path))}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.post("/files", response_model=FileContent)
-async def write_file(file: FileWrite, current_user: dict = Depends(get_current_user)):
+async def write_file(file: FileWrite, canvas_id: str = "default", current_user: dict = Depends(get_current_user)):
     try:
-        path = workspace_service.write_file(file.path, file.content)
-        await manager.broadcast_event("file_changed", {"path": path, "action": "write"})
+        path = workspace_service.write_file(_canvas_rel(canvas_id, file.path), file.content)
+        await manager.broadcast_event("file_changed", {"path": path, "action": "write", "canvas_id": canvas_id})
         return {"path": path, "content": file.content}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.patch("/files", response_model=FileContent)
-async def edit_file(file: FileEdit, current_user: dict = Depends(get_current_user)):
+async def edit_file(file: FileEdit, canvas_id: str = "default", current_user: dict = Depends(get_current_user)):
     try:
-        path = workspace_service.edit_file(file.path, file.old_string, file.new_string, file.replace_all)
+        path = workspace_service.edit_file(_canvas_rel(canvas_id, file.path), file.old_string, file.new_string, file.replace_all)
         content = workspace_service.read_file(path)
-        await manager.broadcast_event("file_changed", {"path": path, "action": "edit"})
+        await manager.broadcast_event("file_changed", {"path": path, "action": "edit", "canvas_id": canvas_id})
         return {"path": path, "content": content}
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/files")
-async def delete_file(path: str, current_user: dict = Depends(get_current_user)):
-    success = workspace_service.delete_file(path)
+async def delete_file(path: str, canvas_id: str = "default", current_user: dict = Depends(get_current_user)):
+    success = workspace_service.delete_file(_canvas_rel(canvas_id, path))
     if success:
-        await manager.broadcast_event("file_changed", {"path": path, "action": "delete"})
+        await manager.broadcast_event("file_changed", {"path": path, "action": "delete", "canvas_id": canvas_id})
     return {"success": success}
 
 
 # ── Components ────────────────────────────────────────────────────────────────
 @router.get("/components", response_model=List[str])
-async def list_components(current_user: dict = Depends(get_current_user)):
-    return workspace_service.list_components()
+async def list_components(canvas_id: str = "default", current_user: dict = Depends(get_current_user)):
+    try:
+        return [f"{p['group']}:{p['name']}" for p in canvases_service.list_pieces(canvas_id)]
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
 
 
 # ── Git ───────────────────────────────────────────────────────────────────────
@@ -110,10 +163,10 @@ async def git_history(limit: int = 50, current_user: dict = Depends(get_current_
 
 @router.post("/git/checkout")
 async def git_checkout(sha: str, current_user: dict = Depends(get_current_user)):
-    success = workspace_service.checkout(sha)
-    if success:
+    ok = workspace_service.checkout(sha)
+    if ok:
         await manager.broadcast_event("git_checkout", {"sha": sha})
-    return {"success": success}
+    return {"success": ok}
 
 
 # ── WebSocket (token required) ────────────────────────────────────────────────
@@ -132,78 +185,84 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
         manager.disconnect(websocket)
 
 
-# ── Hermes Agent chat proxy ───────────────────────────────────────────────────
-# Hermes api_server is OpenAI-compatible: POST /v1/chat/completions with a
-# Bearer API_SERVER_KEY. Same machine, no cookie login, no fake /api/auth/login.
+# ── Hermes chat proxy — OpenAI-compatible api_server, history per canvas ─────
 HERMES_AGENT_URL = os.getenv("HERMES_AGENT_URL", "http://172.19.0.1:8644").rstrip("/")
 HERMES_API_KEY = os.getenv("HERMES_API_KEY", "")
 HERMES_MODEL = os.getenv("HERMES_MODEL", "hermes-agent")
 
-SYSTEM_PROMPT = (
-    "You are the build agent inside Live Design Studio, a live-design tool. "
-    "The user describes UI components/sections; you create or edit them in the Vite workspace. "
-    "Workspace layout: src/components/*.tsx, src/sections/*.tsx, src/layout/*.tsx, each with a "
-    "matching *.preview.tsx wrapper that renders the component standalone. "
-    "Always create both the component file and its .preview.tsx file. "
-    "Use Tailwind classes and the cn() helper from src/lib/utils. Be concise in replies."
-)
 
-
-class ChatMessageIn(BaseModel):
+class ChatIn(BaseModel):
     message: str
     session_id: Optional[str] = None
-    history: Optional[List[dict]] = None
+    canvas_id: str = "default"
 
 
-class ChatResponse(BaseModel):
+class ChatOut(BaseModel):
     response: str
     session_id: Optional[str] = None
+    canvas_id: Optional[str] = None
     tools_used: List[str] = []
 
 
-# Per-session conversation history (OpenAI clients resend history each turn;
-# we keep server-side history keyed by session_id so the browser stays thin).
-chat_sessions: dict[str, List[dict]] = {}
-
-
-@router.post("/chat", response_model=ChatResponse)
-async def chat_with_agent(chat: ChatMessageIn, current_user: dict = Depends(get_current_user)):
-    session_id = chat.session_id or os.urandom(8).hex()
-    history = chat_sessions.setdefault(session_id, [])
-    history.append({"role": "user", "content": chat.message})
-
-    headers = {"Content-Type": "application/json"}
-    if HERMES_API_KEY:
-        headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
-
-    payload = {
-        "model": HERMES_MODEL,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history[-40:],
-        "stream": False,
-    }
-
+@router.post("/chat", response_model=ChatOut)
+async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current_user)):
+    """Start a chat turn in the background; poll /chat/jobs/<job_id> for the reply."""
+    import asyncio, uuid
+    canvas_id = body.canvas_id or "default"
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(f"{HERMES_AGENT_URL}/v1/chat/completions", json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        canvases_service.get_canvas(canvas_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
 
-        reply = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-        history.append({"role": "assistant", "content": reply})
-        return ChatResponse(response=reply or "(empty response)", session_id=session_id, tools_used=[])
-    except httpx.HTTPStatusError as e:
-        return ChatResponse(
-            response=f"Hermes error {e.response.status_code}: {e.response.text[:300]}",
-            session_id=session_id,
-        )
-    except httpx.HTTPError as e:
-        return ChatResponse(
-            response=f"Cannot reach Hermes at {HERMES_AGENT_URL}: {e}",
-            session_id=session_id,
-        )
+    job_id = uuid.uuid4().hex[:12]
+    _jobs[job_id] = {"status": "running", "canvas_id": canvas_id, "response": None}
+
+    async def run():
+        history = canvases_service.load_history(canvas_id)
+        messages = [{"role": "system", "content": build_prompt(canvas_id)}] + [
+            {"role": h["role"], "content": h["content"]} for h in history[-39:]
+        ] + [{"role": "user", "content": body.message}]
+        headers = {"Content-Type": "application/json"}
+        if HERMES_API_KEY:
+            headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
+        try:
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                resp = await client.post(f"{HERMES_AGENT_URL}/v1/chat/completions",
+                                         json={"model": HERMES_MODEL, "messages": messages, "stream": False},
+                                         headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+            reply = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+            canvases_service.append_history(canvas_id, "user", body.message)
+            canvases_service.append_history(canvas_id, "assistant", reply)
+            _jobs[job_id] = {"status": "done", "canvas_id": canvas_id, "response": reply or "(empty response)"}
+        except Exception as e:
+            _jobs[job_id] = {"status": "error", "canvas_id": canvas_id, "response": f"{type(e).__name__}: {e}"}
+
+    asyncio.create_task(run())
+    return ChatOut(response="", session_id=job_id, canvas_id=canvas_id, tools_used=[])
+
+
+# in-memory job store (jobs are short-lived anyway)
+_jobs: dict = {}
+
+
+@router.get("/chat/jobs/{job_id}")
+async def chat_job(job_id: str, current_user: dict = Depends(get_current_user)):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+class ChatReset(BaseModel):
+    session_id: Optional[str] = None
+    canvas_id: Optional[str] = None
 
 
 @router.post("/chat/reset")
-async def reset_chat(session_id: str, current_user: dict = Depends(get_current_user)):
-    chat_sessions.pop(session_id, None)
+async def reset_chat(body: ChatReset, current_user: dict = Depends(get_current_user)):
+    cid = body.canvas_id or "default"
+    canvases_service.clear_history(cid)
+    canvases_service.set_session(cid, None)
     return {"success": True}
