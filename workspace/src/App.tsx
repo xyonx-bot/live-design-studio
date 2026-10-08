@@ -53,30 +53,32 @@ const TYPE_META: Record<string, { icon: any; color: string }> = {
 const COLORS = ['lime', 'blue', 'orange', 'purple', 'pink', 'slate']
 
 /**
- * Load a canvas's preview modules dynamically from its own folder.
- * Works for .tsx/.jsx via Vite transform, and raw .html via srcdoc iframe.
+ * Load a canvas's preview modules directly via /@fs/<abs>… (Vite transform on hit).
+ * No static glob — pieces appear live as the agent writes them.
  */
-const PREVIEW_GLOBS = (import.meta as any).glob('/canvases/*/src/*/*.preview.{tsx,jsx}') as Record<string, () => Promise<{ default?: React.ComponentType }>>
-
 function useCanvasPreviews(canvasId: string) {
   const [previews, setPreviews] = useState<Record<string, React.ComponentType>>({})
   const [htmlPieces, setHtmlPieces] = useState<Record<string, string>>({})
 
   const load = async () => {
-    const base = `/canvases/${encodeURIComponent(canvasId)}/src`
     const found: Record<string, React.ComponentType> = {}
     const htmls: Record<string, string> = {}
 
-    // canvas-scoped stylesheet so each canvas has its own design tokens
+    // canvas-scoped stylesheet — raw static path; set once per canvas, never cache-busted
+    // (cache-bust each load = stylesheet unloads/reloads mid-frame → the collapse you saw)
     const linkId = 'canvas-globals'
     let link = document.getElementById(linkId) as HTMLLinkElement | null
+    const want = `/canvases/${encodeURIComponent(canvasId)}/src/styles/globals.css`
     if (!link) {
       link = document.createElement('link')
       link.id = linkId
       link.rel = 'stylesheet'
       document.head.appendChild(link)
     }
-    link.href = `${base}/styles/globals.css?ts=${Date.now()}`
+    if (link.dataset.canvasId !== canvasId) {
+      link.dataset.canvasId = canvasId
+      link.href = want
+    }
 
     try {
       const res = await api(`/api/canvases/${encodeURIComponent(canvasId)}/pieces`)
@@ -84,28 +86,21 @@ function useCanvasPreviews(canvasId: string) {
         const pieces: { name: string; group: string; file: string; kind: 'tsx' | 'jsx' | 'html' }[] = await res.json()
         for (const p of pieces) {
           const key = `${p.group}:${p.name}`
-          if (p.kind === 'html') {
-            try {
-              const r = await fetch(`/@fs/app/canvases/${canvasId}/src/${p.group}/${p.file}`)
-              if (r.ok) htmls[key] = await r.text()
-            } catch (e) { console.warn('html piece fetch failed', key, e) }
-            continue
-          }
-          // vite static-glob: imports go through its transform pipeline (browser
-          // can't import() raw TSX)
-          const globKey = `/canvases/${canvasId}/src/${p.group}/${p.file}`
-          const loader = PREVIEW_GLOBS[globKey]
-          if (!loader) { console.warn('not in glob', globKey); continue }
           try {
-            const mod = await loader()
-            if (mod?.default) found[key] = mod.default
+            if (p.kind === 'html') {
+              const r = await fetch(`/canvases/${encodeURIComponent(canvasId)}/src/${p.group}/${p.file}`)
+              if (r.ok) htmls[key] = await r.text()
+            } else {
+              // /@fs/abs — no cache-bust; Vite serves the current module from its graph.
+              const mod = await import(/* @vite-ignore */ `/@fs/app/canvases/${encodeURIComponent(canvasId)}/src/${p.group}/${p.file}`)
+              if (mod?.default) found[key] = mod.default
+            }
           } catch (e) {
             console.warn('preview load failed', key, e)
           }
         }
       }
     } catch { /* backend down */ }
-
     setPreviews(found)
     setHtmlPieces(htmls)
   }
@@ -257,27 +252,29 @@ function ResizableFrame({ device, children }: { device: Device; children: React.
   const width = DEVICE_WIDTHS[device]
 
   useEffect(() => {
-    const el = ref.current?.parentElement
-    if (!el) return
+    // measure the .canvas-wrap ancestor (stable), not the self-sizing scaler wrapper —
+    // previously we measured the wrapper which breaks the moment scale<1, causing a runaway collapse.
+    const host = ref.current?.closest('.canvas-wrap') as HTMLElement | null
+    if (!host) return
     const measure = () => {
-      const avail = el.clientWidth - 50 // canvas padding
+      const avail = host.clientWidth - 50 // canvas padding
       setScale(Math.min(1, avail / width))
     }
     measure()
     const ro = new ResizeObserver(measure)
-    ro.observe(el)
+    ro.observe(host)
     return () => ro.disconnect()
   }, [width])
 
-  const viewHeight = '82vh'
+  const viewHeight = 700 // css px of the virtual viewport (before scaling)
   return (
-    <div className="device-frame-scaler" style={{ width: width * scale, height: viewHeight, overflow: 'hidden' }}>
+    <div className="device-frame-scaler" style={{ width: width * scale, height: viewHeight * scale, overflow: 'hidden' }}>
       <div
         ref={ref}
         className="device-frame"
         style={{
           width,
-          height: `calc(${viewHeight} / ${scale})`,
+          height: viewHeight,
           minHeight: 480,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
@@ -779,9 +776,17 @@ export default function App() {
       const start = await res.json()
       const jobId = start.session_id
       if (!jobId) throw new Error(start.response || 'no job id')
-      sessionsRef.current[canvasId] = jobId
-      loadingFor.current[canvasId] = { jobId, startedAt: Date.now() }
-      void pollJob(canvasId, jobId)
+
+      // the backend may pick/own a canvas for the turn (e.g. "next-biz"); follow it so
+      // the visible library + chat always match what the agent actually wrote
+      const backendCanvas = start.canvas_id
+      if (backendCanvas && backendCanvas !== canvasId) {
+        switchCanvas(backendCanvas)
+      }
+
+      sessionsRef.current[backendCanvas ?? canvasId] = jobId
+      loadingFor.current[backendCanvas ?? canvasId] = { jobId, startedAt: Date.now() }
+      void pollJob(backendCanvas ?? canvasId, jobId)
     } catch (err) {
       loadingFor.current[canvasId] = { jobId: null, startedAt: 0 }
       setIsLoading(false)

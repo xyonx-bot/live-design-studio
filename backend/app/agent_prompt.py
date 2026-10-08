@@ -20,8 +20,9 @@ Layout per canvas:
 Rules:
 - For every piece X write BOTH X.tsx and X.preview.tsx inside components/sections/layout/ of the
   active canvas. The .preview renders X standalone with demo content.
-- Style with Tailwind utility classes and cn() from src/lib/utils of the workspace shell.
-  Import from "@/lib/utils" — the workspace's vite config aliases @ to the canvas src.
+- Style with Tailwind utility classes. For cn(), import from "../lib/utils" relative to the piece
+  (each canvas has its own src/lib/utils.ts — already seeded).
+- Each canvas is pre-seeded with src/lib/utils.ts and src/styles/globals.css — never recreate them.
 - When restyling an existing piece, create a VARIANT: X.<style>.preview.tsx next to it
   (e.g. Button.rounded.preview.tsx); only replace X.tsx when the user says keep.
 - No pricing-with-real-prices, ads, lorem ipsum walls, or marketing filler.

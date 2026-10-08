@@ -1,0 +1,28 @@
+/* design tokens for can1 — minimal modern light theme, 2px radius */
+:root {
+  --background: #ffffff;
+  --foreground: #17171a;
+  --card: #ffffff;
+  --card-foreground: #17171a;
+  --popover: #ffffff;
+  --popover-foreground: #17171a;
+  --primary: #17171a;
+  --primary-hover: #2e2e33;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #17171a;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #17171a;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #17171a;
+  --radius: 2px;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+* { border-color: var(--border); box-sizing: border-box; }
+body, section, .piece-root { font-family: var(--font-sans); }

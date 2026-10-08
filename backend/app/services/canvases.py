@@ -38,13 +38,21 @@ def _write_meta(canvas_id: str, meta: dict) -> None:
     (d / "meta.json").write_text(json.dumps(meta, indent=2))
 
 
+_TEMPLATE = _CANVASES_DIR / "_template"
+
+
 def _scaffold(canvas_id: str) -> None:
+    """Seed from _template (bare min: tokens/globals.css, lib/utils.ts, tailwind.config.js,
+    empty components/sections/layout dirs). Agent writes pieces; no build scaffold here."""
     d = _dir(canvas_id)
-    for group in ("components", "sections", "layout", "styles"):
-        (d / "src" / group).mkdir(parents=True, exist_ok=True)
-    gcss = d / "src" / "styles" / "globals.css"
-    if not gcss.exists():
-        gcss.write_text("/* design tokens for this canvas */\n:root {\n  --radius: 0.4rem;\n}\n")
+    if _TEMPLATE.exists():
+        shutil.copytree(_TEMPLATE, d, dirs_exist_ok=True)
+    else:
+        for group in ("components", "sections", "layout", "styles", "lib"):
+            (d / "src" / group).mkdir(parents=True, exist_ok=True)
+        gcss = d / "src" / "styles" / "globals.css"
+        if not gcss.exists():
+            gcss.write_text("/* design tokens for this canvas */\n:root {\n  --radius: 0.4rem;\n}\n")
 
 
 def list_canvases() -> List[dict]:
@@ -55,7 +63,7 @@ def list_canvases() -> List[dict]:
                                "archived": False, "created_at": datetime.utcnow().isoformat()})
     out = []
     for child in sorted(_CANVASES_DIR.iterdir()):
-        if child.is_dir() and _ID_RE.match(child.name):
+        if child.is_dir() and _ID_RE.match(child.name) and not child.name.startswith("_"):
             try:
                 out.append(_read_meta(child.name))
             except Exception:
