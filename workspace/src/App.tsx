@@ -290,6 +290,7 @@ function PreviewCanvas({
 function ResizableFrame({ device, bg, children }: { device: Device; bg: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
+  const [frameH, setFrameH] = useState(600)
   const width = DEVICE_WIDTHS[device]
 
   useEffect(() => {
@@ -298,6 +299,9 @@ function ResizableFrame({ device, bg, children }: { device: Device; bg: string; 
     const measure = () => {
       const avail = host.clientWidth - 50
       setScale(Math.min(1, avail / width))
+      // stage height = real available height of the wrapper (accounting for scaled width)
+      const availH = host.clientHeight - 50
+      setFrameH(Math.round(availH / Math.min(1, avail / width)))
     }
     measure()
     const ro = new ResizeObserver(measure)
@@ -305,16 +309,14 @@ function ResizableFrame({ device, bg, children }: { device: Device; bg: string; 
     return () => ro.disconnect()
   }, [width])
 
-  const viewHeight = 700
   return (
-    <div className="device-frame-scaler" style={{ width: width * scale, height: viewHeight * scale, overflow: 'hidden' }}>
+    <div className="device-frame-scaler" style={{ width: width * scale, height: frameH * scale, overflow: 'hidden' }}>
       <div
         ref={ref}
         className="device-frame"
         style={{
           width,
-          height: viewHeight,
-          minHeight: 480,
+          height: frameH,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
           background: bg === 'transparent' ? 'transparent' : bg,
@@ -381,7 +383,6 @@ function PreviewContent({
   const isSection = selected.startsWith('sections:') || selected.startsWith('layout:')
   return (
     <div className={cn('frame-real', !isSection && 'centered')}>
-      {!isSection && <div className="stage-label">{selected.replace(':', ' / ')}</div>}
       <Piece name={selected} previews={previews} htmlPreviews={htmlPreviews} />
     </div>
   )

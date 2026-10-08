@@ -53,15 +53,7 @@ export function SmokedButton({
 
 export default function FrostedButtonSmokedPreview() {
   return (
-    <div className="relative min-h-[480px] overflow-hidden flex flex-col items-center justify-center gap-10 p-10">
-      {/* bright sunset backdrop so the smoked glass reads clearly */}
-      <div
-        className="absolute inset-0 -z-10"
-        style={{
-          background:
-            "radial-gradient(1000px 600px at 15% 20%, #fb7185 0%, transparent 55%), radial-gradient(1100px 700px at 90% 15%, #fbbf24 0%, transparent 50%), radial-gradient(900px 900px at 50% 110%, #a78bfa 0%, transparent 60%), linear-gradient(135deg, #fda4af 0%, #fcd34d 50%, #c4b5fd 100%)",
-        }}
-      />
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
 
       <div className="flex flex-wrap items-center justify-center gap-4">
         <SmokedButton>Get Started</SmokedButton>

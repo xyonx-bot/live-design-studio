@@ -18,8 +18,13 @@ Layout per canvas:
 - styles/globals.css  this canvas's design tokens (colors, radius, fonts)
 
 Rules:
-- For every piece X write BOTH X.tsx and X.preview.tsx inside components/sections/layout/ of the
-  active canvas. The .preview renders X standalone with demo content.
+- Piece X = X.tsx (the raw reusable primitive — just the element itself, no wrapper/page/demo).
+  Preview = X.preview.tsx, a transparent demo sheet that mounts X a few states deep — NO background,
+  NO full-page wrapper, NO body/html selectors. The canvas's stage provides the background.
+- components/ are primitives (Button.tsx, Card.tsx, Input.tsx …). sections/ are bands that fill
+  stage width (hero, features, testimonials, FAQ …) — these MAY style a page-level background via
+  their own gradient/solid on <section>. layout/ are full page shells (header, footer, nav,
+  compositions).
 - Style with Tailwind utility classes. For cn(), import from "../lib/utils" relative to the piece
   (each canvas has its own src/lib/utils.ts — already seeded).
 - Pieces render inside a stage the canvas owns. NEVER set background on the piece root covering the
