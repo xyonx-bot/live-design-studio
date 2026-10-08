@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from './lib/utils'
 import {
   ArrowLeft, Check, ChevronDown, ChevronRight,
-  Component as ComponentIcon, Eye, Grid2X2, History,
+  Component as ComponentIcon, Eye, Grid2X2, History, ImagePlus,
   LayoutTemplate, Maximize2, MessageSquareText, Monitor,
   PanelLeft, PanelRight, Search, Send,
   Smartphone, Sparkles, Tablet, WandSparkles, X,
@@ -418,7 +418,7 @@ function EmptyStage({ text }: { text: string }) {
 
 function ActivityPanel({
   messages, activities, isLoading, loadingStartedAt, prompt, setPrompt, onSend, onClear, onRetry,
-  currentModel, onModelChange,
+  currentModel, onModelChange, onImagePick, attachedImage,
 }: {
   messages: ChatMessage[]
   activities: ActivityEvent[]
@@ -431,6 +431,8 @@ function ActivityPanel({
   onRetry: () => void
   currentModel: string
   onModelChange: (m: string) => Promise<void>
+  onImagePick?: (files: FileList | null) => void
+  attachedImage?: File | null
 }) {
   const [tab, setTab] = useState<'inbox' | 'activity'>('inbox')
   const endRef = useRef<HTMLDivElement>(null)
@@ -526,7 +528,14 @@ function ActivityPanel({
           }}
         />
         <div className="prompt-actions">
-          <span className="model-pill" title="chat model"><ModelPicker currentModel={currentModel} onChange={onModelChange} /></span>
+          <span className="prompt-controls">
+            <ModelPicker currentModel={currentModel} onChange={onModelChange} />
+            <label className="attach" title="Attach image">
+              <ImagePlus size={13} />
+              <input type="file" accept="image/*" hidden onChange={(e) => onImagePick?.(e.target.files)} />
+            </label>
+            {attachedImage && <span className="attach-chip" title={attachedImage.name}>🖼 {attachedImage.name.slice(0, 18)}</span>}
+          </span>
           <span><kbd>↵</kbd> to send</span>
           <span style={{ display: 'flex', gap: 6 }}>
             {isLoading && <button aria-label="Retry" onClick={onRetry} title="Retry last message" style={{ background: 'transparent', border: '1px solid #34343a', color: '#8b8a92', width: 'auto', padding: '0 8px', borderRadius: 4 }}>Retry</button>}
@@ -655,6 +664,7 @@ export default function App() {
   const [showNewCanvas, setShowNewCanvas] = useState(false)
   const [currentModel, setCurrentModel] = useState<string>('')
   const [stage, setStageInternal] = useState<StageCfg>(defaultStage)
+  const [attachedImage, setAttachedImage] = useState<File | null>(null)
   const lastMessageRef = useRef<Record<string, string>>({})
 
   const { previews, htmlPieces, reload } = useCanvasPreviews(canvasId)
@@ -815,6 +825,35 @@ export default function App() {
     setPrompt('')
     setIsLoading(true)
     loadingFor.current[canvasId] = { jobId: null, startedAt: Date.now() }
+
+    // carry the image as a data URL appended to the message
+    let imageNote = ''
+    if (attachedImage) {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => resolve(r.result as string)
+        r.onerror = reject
+        r.readAsDataURL(attachedImage)
+      })
+      imageNote = `\n\n[Attached image: ${attachedImage.name}]\ndataURL: ${dataUrl.slice(0, 80)}… (${dataUrl.length} bytes base64)`
+      setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text + imageNote, timestamp: new Date() }])
+      // include the actual data url only in the request payload, not the message store
+      const res = await api('/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: text + '\n\n' + dataUrl, session_id: sessionId, canvas_id: canvasId }),
+      })
+      setAttachedImage(null)
+      const start = await res.json()
+      const jobId = start.session_id
+      if (!jobId) throw new Error(start.response || 'no job id')
+      const backendCanvas = start.canvas_id
+      if (backendCanvas && backendCanvas !== canvasId) switchCanvas(backendCanvas)
+      sessionsRef.current[backendCanvas ?? canvasId] = jobId
+      loadingFor.current[backendCanvas ?? canvasId] = { jobId, startedAt: Date.now() }
+      void pollJob(backendCanvas ?? canvasId, jobId)
+      return
+    }
+
     setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text, timestamp: new Date() }])
     try {
       const res = await api('/api/chat', {
@@ -917,6 +956,8 @@ export default function App() {
             onRetry={retry}
             currentModel={currentModel}
             onModelChange={setModel}
+            attachedImage={attachedImage}
+            onImagePick={(files) => setAttachedImage(files?.[0] ?? null)}
           />
         </div>
       </div>
