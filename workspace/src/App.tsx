@@ -13,6 +13,50 @@ type Device = 'desktop' | 'tablet' | 'mobile'
 
 const DEVICE_WIDTHS: Record<Device, number> = { desktop: 1440, tablet: 768, mobile: 375 }
 
+interface StageCfg { bg: string; wrapBg: string }
+const STAGE_KEY = 'lds_stage'
+const defaultStage: StageCfg = { bg: '#f3f0e8', wrapBg: '#1c1c22' }
+function loadStage(canvasId: string): StageCfg {
+  try { return { ...defaultStage, ...JSON.parse(localStorage.getItem(`${STAGE_KEY}:${canvasId}`) || '{}') } } catch { return defaultStage }
+}
+function saveStage(canvasId: string, s: StageCfg) { localStorage.setItem(`${STAGE_KEY}:${canvasId}` , JSON.stringify(s)) }
+
+const STAGE_PRESETS: { name: string; bg: string }[] = [
+  { name: 'Paper', bg: '#f3f0e8' },
+  { name: 'White', bg: '#ffffff' },
+  { name: 'Slate', bg: '#1e1e24' },
+  { name: 'Ink', bg: '#0f0f12' },
+  { name: 'Sage', bg: '#e9efe0' },
+  { name: 'Transparent', bg: 'transparent' },
+]
+
+function StageControls({ stage }: { stage: StageCfg }) {
+  const [open, setOpen] = useState(false)
+  const setStage = (window as any).__ldsSetStage as ((s: StageCfg) => void) | undefined
+  return (
+    <span className="stage-ctl">
+      <button className="toolbar-icon" onClick={() => setOpen(!open)} title="Stage background" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ width: 12, height: 12, borderRadius: 2, background: stage.bg === 'transparent' ? 'repeating-conic-gradient(#555 0 25%, #999 0 50%) 0/6px 6px' : stage.bg, border: '1px solid #444' }} />
+        BG
+      </button>
+      {open && (
+        <div className="stage-menu">
+          {STAGE_PRESETS.map((p) => (
+            <button key={p.name} onClick={() => { setStage?.({ ...stage, bg: p.bg }); setOpen(false) }}>
+              <span className="swatch" style={{ background: p.bg === 'transparent' ? 'repeating-conic-gradient(#555 0 25%, #999 0 50%) 0/6px 6px' : p.bg }} />
+              {p.name}
+            </button>
+          ))}
+          <label className="custom">
+            <span>Custom</span>
+            <input type="color" value={stage.bg.startsWith('#') ? stage.bg : '#f3f0e8'} onChange={(e) => setStage?.({ ...stage, bg: e.target.value })} />
+          </label>
+        </div>
+      )}
+    </span>
+  )
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -193,7 +237,7 @@ function Sidebar({
 }
 
 function PreviewCanvas({
-  previews, htmlPreviews = {}, selected, device, setDevice, view, setSelected,
+  previews, htmlPreviews = {}, selected, device, setDevice, view, setSelected, stage,
 }: {
   previews: Record<string, React.ComponentType>
   htmlPreviews?: Record<string, string>
@@ -202,6 +246,7 @@ function PreviewCanvas({
   setDevice: (d: Device) => void
   view: ViewMode
   setSelected: (v: string) => void
+  stage: StageCfg
 }) {
   const label =
     selected === '__page__' ? 'Full page' : selected ? (selected.includes(':') ? selected.split(':')[1] : selected) : 'Nothing selected'
@@ -221,15 +266,11 @@ function PreviewCanvas({
               </button>
             ))}
           </div>
+          <StageControls stage={stage} />
         </div>
       </div>
-      <div className="canvas-wrap">
-        <ResizableFrame device={device}>
-          <div className="frame-top">
-            <span className="traffic"><i /><i /><i /></span>
-            <span className="frame-url">{DEVICE_WIDTHS[device]}px{selected ? ` · ${label.toLowerCase()}` : ''}</span>
-            <span className="frame-dots">•••</span>
-          </div>
+      <div className="canvas-wrap" style={{ background: stage.wrapBg }}>
+        <ResizableFrame device={device} bg={stage.bg}>
           <PreviewContent previews={previews} htmlPreviews={htmlPreviews} selected={selected} view={view} setSelected={setSelected} device={device} />
         </ResizableFrame>
       </div>
@@ -246,18 +287,16 @@ function PreviewCanvas({
  * when the canvas area is narrower, so a 1440px section looks exactly like a
  * real 1440px browser. Scrolls only inside the frame.
  */
-function ResizableFrame({ device, children }: { device: Device; children: React.ReactNode }) {
+function ResizableFrame({ device, bg, children }: { device: Device; bg: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
   const width = DEVICE_WIDTHS[device]
 
   useEffect(() => {
-    // measure the .canvas-wrap ancestor (stable), not the self-sizing scaler wrapper —
-    // previously we measured the wrapper which breaks the moment scale<1, causing a runaway collapse.
     const host = ref.current?.closest('.canvas-wrap') as HTMLElement | null
     if (!host) return
     const measure = () => {
-      const avail = host.clientWidth - 50 // canvas padding
+      const avail = host.clientWidth - 50
       setScale(Math.min(1, avail / width))
     }
     measure()
@@ -266,7 +305,7 @@ function ResizableFrame({ device, children }: { device: Device; children: React.
     return () => ro.disconnect()
   }, [width])
 
-  const viewHeight = 700 // css px of the virtual viewport (before scaling)
+  const viewHeight = 700
   return (
     <div className="device-frame-scaler" style={{ width: width * scale, height: viewHeight * scale, overflow: 'hidden' }}>
       <div
@@ -278,6 +317,7 @@ function ResizableFrame({ device, children }: { device: Device; children: React.
           minHeight: 480,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
+          background: bg === 'transparent' ? 'transparent' : bg,
         }}
       >
         {children}
@@ -613,6 +653,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [showNewCanvas, setShowNewCanvas] = useState(false)
   const [currentModel, setCurrentModel] = useState<string>('')
+  const [stage, setStageInternal] = useState<StageCfg>(defaultStage)
   const lastMessageRef = useRef<Record<string, string>>({})
 
   const { previews, htmlPieces, reload } = useCanvasPreviews(canvasId)
@@ -718,9 +759,15 @@ export default function App() {
     if (save) saveCanvas(id)
     setSelectedRaw('')
     setActivities([])
+    setStage(loadStage(id))
     void hydrateCanvas(id)
   }
   const newCanvas = () => setShowNewCanvas(true)
+
+  // stage setter exposed to StageControls (defined above App for hoistability)
+  const setStage = (s: StageCfg) => { setStageInternal(s); saveStage(canvasId, s) }
+  useEffect(() => { (window as any).__ldsSetStage = setStage; return () => { delete (window as any).__ldsSetStage } })
+  useEffect(() => { setStageInternal(loadStage(canvasId)) }, [canvasId])
 
   // auth check
   useEffect(() => {
@@ -854,7 +901,7 @@ export default function App() {
         </div>
         <div className="main-stage">
           <div className="stage-topline"><span>{viewLabel}</span><span>⌘ ⇧ F <Maximize2 size={12} /></span></div>
-          <PreviewCanvas previews={previews} htmlPreviews={htmlPieces} selected={selected} device={device} setDevice={setDevice} view={view} setSelected={setSelected} />
+          <PreviewCanvas previews={previews} htmlPreviews={htmlPieces} selected={selected} device={device} setDevice={setDevice} view={view} setSelected={setSelected} stage={stage} />
         </div>
         <div className={cn('panel-slot right-slot', !showRight && 'hidden-panel')}>
           <ActivityPanel

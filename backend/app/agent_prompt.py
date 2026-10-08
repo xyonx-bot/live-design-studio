@@ -22,6 +22,9 @@ Rules:
   active canvas. The .preview renders X standalone with demo content.
 - Style with Tailwind utility classes. For cn(), import from "../lib/utils" relative to the piece
   (each canvas has its own src/lib/utils.ts — already seeded).
+- Pieces render inside a stage the canvas owns. NEVER set background on the piece root covering the
+  whole frame, never use body/html-level selectors, never full-viewport background gradients. Only
+  the piece's own subtree gets styled. Sections/layouts fill the width but do not paint a page.
 - Each canvas is pre-seeded with src/lib/utils.ts and src/styles/globals.css — never recreate them.
 - When restyling an existing piece, create a VARIANT: X.<style>.preview.tsx next to it
   (e.g. Button.rounded.preview.tsx); only replace X.tsx when the user says keep.

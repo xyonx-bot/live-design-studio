@@ -105,12 +105,14 @@
 .toolbar-icon { background: #222229; border-radius: 4px; }
 .canvas-wrap { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 35px 25px; background-color: #1c1c22; background-image: radial-gradient(#36363d 1px, transparent 1px); background-size: 18px 18px; }
 .device-frame-scaler { flex: 0 0 auto; }
-.device-frame { height: 82vh; background: #f3f0e8; border-radius: 7px; overflow: auto; box-shadow: 0 15px 50px #00000055; }
-.frame-top { height: 28px; background: #e8e4da; display: flex; align-items: center; justify-content: space-between; padding: 0 11px; color: #8b8981; font-size: 9px; }
-.traffic { display: flex; gap: 4px; }
-.traffic i { width: 6px; height: 6px; display: block; border-radius: 50%; background: #c5c0b6; }
-.frame-url { background: #ddd9cf; padding: 3px 32px; border-radius: 3px; }
-.frame-dots { letter-spacing: 2px; }
+.device-frame { height: 700px; border-radius: 7px; overflow: auto; box-shadow: 0 15px 50px #00000055; }
+.stage-ctl { position: relative; }
+.stage-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; display: flex; flex-direction: column; background: #1b1b21; border: 1px solid #2b2b32; border-radius: 6px; padding: 6px; min-width: 150px; }
+.stage-menu button { display: flex; align-items: center; gap: 8px; background: transparent; border: 0; color: #d9d6cf; padding: 7px 9px; font-size: 11px; border-radius: 4px; }
+.stage-menu button:hover { background: #24242b; }
+.stage-menu .swatch { width: 14px; height: 14px; border: 1px solid #3c3c44; border-radius: 3px; }
+.stage-menu .custom { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; font-size: 11px; color: #8b8a92; border-top: 1px solid #2b2b32; margin-top: 4px; padding-top: 8px; }
+.stage-menu .custom input { appearance: none; background: none; border: 1px solid #3c3c44; border-radius: 4px; width: 40px; height: 22px; padding: 0; }
 .preview-footer { height: 38px; display: flex; justify-content: space-between; align-items: center; color: #66666e; font-size: 10px; padding: 0 18px; }
 .preview-footer span { display: flex; align-items: center; gap: 6px; }
 .live-dot { width: 6px; height: 6px; background: #b9ed46; border-radius: 50%; box-shadow: 0 0 0 3px #b9ed4619; }
@@ -174,9 +176,9 @@
 .child-mark { width: 4px; height: 4px; background: currentColor; }
 
 /* Real component rendering inside the preview frame */
-.frame-real { height: calc(100% - 28px); overflow: auto; background: #ffffff; color: #151612; display: flex; flex-direction: column; }
+.frame-real { height: 100%; overflow: auto; display: flex; flex-direction: column; }
 .frame-real.centered { align-items: center; justify-content: center; padding: 32px; }
-.page-stack { height: calc(100% - 28px); overflow: auto; background: #ffffff; color: #151612; }
+.page-stack { height: 100%; overflow: auto; }
 
 /* Login */
 .login-shell { min-height: 100vh; display: grid; place-items: center; background: #121217; }
