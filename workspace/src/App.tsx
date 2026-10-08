@@ -826,40 +826,31 @@ export default function App() {
     setIsLoading(true)
     loadingFor.current[canvasId] = { jobId: null, startedAt: Date.now() }
 
-    // carry the image as a data URL appended to the message
-    let imageNote = ''
+    // if an image is attached, upload it to R2 first and include the public URL
+    let imageUrl: string | null = null
     if (attachedImage) {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader()
-        r.onload = () => resolve(r.result as string)
-        r.onerror = reject
-        r.readAsDataURL(attachedImage)
-      })
-      imageNote = `\n\n[Attached image: ${attachedImage.name}]\ndataURL: ${dataUrl.slice(0, 80)}… (${dataUrl.length} bytes base64)`
-      setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text + imageNote, timestamp: new Date() }])
-      // include the actual data url only in the request payload, not the message store
-      const res = await api('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: text + '\n\n' + dataUrl, session_id: sessionId, canvas_id: canvasId }),
-      })
-      setAttachedImage(null)
-      const start = await res.json()
-      const jobId = start.session_id
-      if (!jobId) throw new Error(start.response || 'no job id')
-      const backendCanvas = start.canvas_id
-      if (backendCanvas && backendCanvas !== canvasId) switchCanvas(backendCanvas)
-      sessionsRef.current[backendCanvas ?? canvasId] = jobId
-      loadingFor.current[backendCanvas ?? canvasId] = { jobId, startedAt: Date.now() }
-      void pollJob(backendCanvas ?? canvasId, jobId)
-      return
+      try {
+        const fd = new FormData()
+        fd.append('file', attachedImage)
+        fd.append('canvas_id', canvasId)
+        const upRes = await api('/api/uploads', { method: 'POST', body: fd })
+        const up = await upRes.json()
+        imageUrl = up.url
+      } catch (e) {
+        setMessagesFor(canvasId, (m) => [...m, { role: 'assistant', content: `Upload failed: ${e instanceof Error ? e.message : 'upload error'}`, timestamp: new Date() }])
+        setIsLoading(false)
+        loadingFor.current[canvasId] = { jobId: null, startedAt: 0 }
+        return
+      }
     }
 
-    setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text, timestamp: new Date() }])
+    setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text + (imageUrl ? `\n\n[${attachedImage?.name}](${imageUrl})` : ''), timestamp: new Date() }])
     try {
       const res = await api('/api/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: text, session_id: sessionId, canvas_id: canvasId }),
+        body: JSON.stringify({ message: text, image_url: imageUrl, session_id: sessionId, canvas_id: canvasId }),
       })
+      setAttachedImage(null)
       const start = await res.json()
       const jobId = start.session_id
       if (!jobId) throw new Error(start.response || 'no job id')

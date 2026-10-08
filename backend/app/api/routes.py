@@ -7,10 +7,14 @@ from app.core.security import verify_password, create_access_token, decode_acces
 from app.models.schemas import Token, FileItem, FileContent, FileWrite, FileEdit, CommitRequest, CommitResponse
 from app.services.workspace import workspace_service
 from app.services import canvases as canvases_service
+from app.services import r2 as r2_service
 from app.services.websocket import manager
 from app.agent_prompt import build_prompt
 import os
 import httpx
+
+# Chat multipart support
+from fastapi import UploadFile, File, Form
 
 settings = get_settings()
 router = APIRouter()
@@ -232,10 +236,23 @@ HERMES_MODEL = os.getenv("HERMES_MODEL", "hermes-agent")
 HERMES_AGENT_MODEL = HERMES_MODEL  # default; per-canvas override via set_model
 
 
+@router.post("/uploads")
+async def upload_image(file: UploadFile = File(...), canvas_id: str = Form("default"), user: dict = Depends(get_current_user)):
+    """Upload an image to R2; returns the public URL to include in chat messages."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="file too large (max 8MB)")
+    url = r2_service.upload(data, file.content_type or "application/octet-stream", file.filename or "")
+    return {"url": url, "name": file.filename, "content_type": file.content_type, "size": len(data)}
+
+
 class ChatIn(BaseModel):
     message: str
     session_id: Optional[str] = None
     canvas_id: str = "default"
+    image_url: Optional[str] = None
 
 
 class ChatOut(BaseModel):
@@ -268,7 +285,9 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
         try:
             async with httpx.AsyncClient(timeout=600.0) as client:
                 resp = await client.post(f"{HERMES_AGENT_URL}/v1/chat/completions",
-                                         json={"model": model, "messages": messages_payload(canvas_id, body.message, history), "stream": False},
+                                         json={"model": model,
+                                               "messages": messages_payload(canvas_id, body.message, history, image_url=body.image_url),
+                                               "stream": False},
                                          headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
@@ -283,10 +302,16 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
     return ChatOut(response="", session_id=job_id, canvas_id=canvas_id, tools_used=[])
 
 
-def messages_payload(canvas_id: str, new_message: str, history: List[dict]) -> List[dict]:
-    return [{"role": "system", "content": build_prompt(canvas_id)}] + [
+def messages_payload(canvas_id: str, new_message: str, history: List[dict], image_url: Optional[str] = None) -> List[dict]:
+    sys_msg = build_prompt(canvas_id)
+    if image_url:
+        sys_msg += f"\n\nThe user attached this image to the message; use it as visual reference when designing: {image_url}"
+    user_content = [{"type": "text", "text": new_message}]
+    if image_url:
+        user_content.append({"type": "image_url", "image_url": {"url": image_url}})
+    return [{"role": "system", "content": sys_msg}] + [
         {"role": h["role"], "content": h["content"]} for h in history[-39:]
-    ] + [{"role": "user", "content": new_message}]
+    ] + [{"role": "user", "content": user_content}]
 
 
 # in-memory job store (jobs are short-lived anyway)

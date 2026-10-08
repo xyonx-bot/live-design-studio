@@ -10,3 +10,4 @@ gitpython==3.1.43
 httpx==0.28.1
 websockets==13.1
 watchfiles==1.0.3
+boto3==1.35.55
