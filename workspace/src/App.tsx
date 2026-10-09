@@ -803,12 +803,13 @@ export default function App() {
       if (!r.ok) return
       const list = await r.json()
       setCanvases(list)
-      // fresh load lands on default unless a saved canvas exists in the list
+      // fresh load: honor the saved canvas id (including __none__); otherwise land on the first canvas
       let next = getSavedCanvas()
-      if (!list.find((c: any) => c.id === next)) {
-        next = list.find((c: any) => c.id === 'default')?.id ?? list[0]?.id ?? 'default'
+      if (next !== NO_CANVAS && !list.find((c: any) => c.id === next)) {
+        next = list[0]?.id ?? NO_CANVAS
       }
-      switchCanvas(next, /* skip save */ true)
+      if (next !== canvasId) switchCanvas(next, /* skip save */ false)
+      else if (next === NO_CANVAS) { /* stay on the blank state */ }
     }).catch(() => {})
   }, [authed]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -896,13 +897,7 @@ export default function App() {
     setStage(loadStage(id))
     void hydrateCanvas(id)
   }
-  const newCanvas = () => {
-    setCanvasId(NO_CANVAS)
-    saveCanvas(NO_CANVAS)
-    setSelectedRaw('')
-    setActivities([])
-    setMessagesFor('__none__', () => [] as ChatMessage[])  // blank chat until first send
-  }
+  const newCanvas = () => setShowNewCanvas(true)
 
   // stage setter exposed to StageControls (defined above App for hoistability)
   const setStage = (s: StageCfg) => { setStageInternal(s); saveStage(canvasId, s) }
@@ -933,6 +928,13 @@ export default function App() {
           pushActivity({ title: `${msg.payload.action === 'edit' ? 'Editing' : msg.payload.action === 'delete' ? 'Deleted' : 'Wrote'} ${p.split('/').slice(-2).join('/')}`, detail: 'hot reload', state: 'working' })
           // always reload sidebar — cheap; only redraw the canvas when the file is for the current one
           reloadSidebar.current?.()
+          if (cv && cv[1] !== canvasId) {
+            pushActivity({
+              title: `Files landing in ${cv[1]}`,
+              detail: 'switch canvas to see them',
+              state: 'success',
+            })
+          }
           if (cv && cv[1] === canvasId) {
             jumpToPiece(`${cv[2]}:${cv[3]}`)
             reload()
@@ -998,9 +1000,22 @@ export default function App() {
         body: JSON.stringify({ message: text, image_url: imageUrl, session_id: sessionId, canvas_id: apiCanvasId }),
       })
       setAttachedImage(null)
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try {
+          const text = await res.text()
+          // try parsing JSON first
+          try {
+            const parsed = JSON.parse(text)
+            if (parsed?.detail) detail = parsed.detail
+            else if (text.length < 200) detail = `${res.status}: ${text}`
+          } catch { detail = `${res.status}: ${text.slice(0, 100)}` }
+        } catch {}
+        throw new Error(detail)
+      }
       const start = await res.json()
       const jobId = start.session_id
-      if (!jobId) throw new Error(start.response || 'no job id')
+      if (!jobId) throw new Error(start.response || 'no job id returned')
 
       // the backend may pick/own a canvas for the turn (e.g. "next-biz"); follow it so
       // the visible library + chat always match what the agent actually wrote
