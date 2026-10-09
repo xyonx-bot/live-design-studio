@@ -5,5 +5,5 @@
   "archived": false,
   "created_at": "2026-10-09T06:52:57.097256",
   "provider": "nvidia",
-  "model": "z-ai/glm-5.3"
+  "model": "deepseek-ai/deepseek-v4.1-flash"
 }

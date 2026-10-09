@@ -5,6 +5,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: livepreview_api
+    # Run as the host user so the workspace volume stays writable by the agent.
+    user: "1000:1000"
     volumes:
       - /home/ubuntu/live-preview/workspace:/workspace
     environment:

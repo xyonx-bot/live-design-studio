@@ -777,6 +777,11 @@ export default function App() {
 
   const { previews, htmlPieces, reload } = useCanvasPreviews(canvasId)
 
+  // When the WS observes any file_changed for any canvas we are looking at, kick the sidebar reload.
+  // (useCanvasPreviews returns reload bound to the *current* canvas)
+  const reloadSidebar = useRef(reload)
+  useEffect(() => { reloadSidebar.current = reload }, [reload, canvasId])
+
   // chat state scoped per canvas
   const messagesRef = useRef<Record<string, ChatMessage[]>>({})
   const sessionsRef = useRef<Record<string, string | null>>({})
@@ -891,7 +896,13 @@ export default function App() {
     setStage(loadStage(id))
     void hydrateCanvas(id)
   }
-  const newCanvas = () => { setCanvasId(NO_CANVAS); saveCanvas(NO_CANVAS); setSelectedRaw(''); setActivities([]) }
+  const newCanvas = () => {
+    setCanvasId(NO_CANVAS)
+    saveCanvas(NO_CANVAS)
+    setSelectedRaw('')
+    setActivities([])
+    setMessagesFor('__none__', () => [] as ChatMessage[])  // blank chat until first send
+  }
 
   // stage setter exposed to StageControls (defined above App for hoistability)
   const setStage = (s: StageCfg) => { setStageInternal(s); saveStage(canvasId, s) }
@@ -920,6 +931,8 @@ export default function App() {
           const cv = p.match(/canvases\/([^/]+)\/src\/(components|sections|layout)\/([^/]+)\.preview\.tsx$/)
             ?? p.match(/canvases\/([^/]+)\/src\/(components|sections|layout)\/([^./]+)\.(tsx|jsx|html)$/)
           pushActivity({ title: `${msg.payload.action === 'edit' ? 'Editing' : msg.payload.action === 'delete' ? 'Deleted' : 'Wrote'} ${p.split('/').slice(-2).join('/')}`, detail: 'hot reload', state: 'working' })
+          // always reload sidebar — cheap; only redraw the canvas when the file is for the current one
+          reloadSidebar.current?.()
           if (cv && cv[1] === canvasId) {
             jumpToPiece(`${cv[2]}:${cv[3]}`)
             reload()
@@ -1047,7 +1060,8 @@ export default function App() {
           <button className="project-title"><span className="project-status" /> <span>Live Design Studio</span></button>
           <span className="slash">/</span>
           <div className="canvas-switcher">
-            <select value={canvasId} onChange={(e) => switchCanvas(e.target.value)} title="Active canvas">
+            <select value={canvasId} onChange={(e) => { const v = e.target.value; if (v === NO_CANVAS) { newCanvas(); return } switchCanvas(v) }} title="Active canvas">
+              {canvasId === NO_CANVAS && <option value={NO_CANVAS}>(new canvas)</option>}
               {canvases.filter((c) => !c.archived).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             <button onClick={newCanvas} title="New canvas">+ New</button>
