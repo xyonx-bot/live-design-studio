@@ -927,6 +927,21 @@ export default function App() {
         } else if (msg.type === 'git_commit') {
           pushActivity({ title: 'Version saved', detail: msg.payload.message ?? msg.payload.sha, state: 'saved' })
           reload()
+        } else if (msg.type === 'run_event' && msg.payload.canvas_id === canvasId) {
+          const state = msg.payload.state
+          if (state === 'running') {
+            pushActivity({ title: 'Running', detail: 'files landing…', state: 'working' })
+          } else if (state === 'settled') {
+            const n = msg.payload.file_count ?? 0
+            pushActivity({ title: 'Idle', detail: `${n} file${n === 1 ? '' : 's'} landed`, state: 'success' })
+            // Surface in chat as a synthetic assistant note so the loop closes even if HTTP died
+            if (!loadingFor.current[canvasId]?.jobId) {
+              setMessagesFor(canvasId, (m) => [...m, { role: 'assistant', content: `_Settled_: ${n} file${n === 1 ? '' : 's'} changed.`, timestamp: new Date() }])
+            }
+          } else if (state === 'interrupted') {
+            pushActivity({ title: 'Interrupted', detail: 'the requesting job did not complete', state: 'success' })
+            setMessagesFor(canvasId, (m) => [...m, { role: 'assistant', content: `⚠ Chat request ended before the run finished — click Resume in the prompt box to re-attach.`, timestamp: new Date() }])
+          }
         }
       } catch { /* ignore */ }
     }

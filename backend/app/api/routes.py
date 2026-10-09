@@ -109,6 +109,7 @@ async def keep_piece_variant(canvas_id: str, group: str, name: str, body: KeepVa
     await manager.broadcast_event("file_changed", {
         "path": f"src/{group}/{name}.preview", "action": "keep",
         "canvas_id": canvas_id, "variant": body.variant})
+    queue_file_change(canvas_id)
     return result
 
 
@@ -187,6 +188,7 @@ async def write_file(file: FileWrite, canvas_id: str = "default", current_user: 
     try:
         path = workspace_service.write_file(_canvas_rel(canvas_id, file.path), file.content)
         await manager.broadcast_event("file_changed", {"path": path, "action": "write", "canvas_id": canvas_id})
+        queue_file_change(canvas_id)
         return {"path": path, "content": file.content}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -208,6 +210,7 @@ async def delete_file(path: str, canvas_id: str = "default", current_user: dict 
     success = workspace_service.delete_file(_canvas_rel(canvas_id, path))
     if success:
         await manager.broadcast_event("file_changed", {"path": path, "action": "delete", "canvas_id": canvas_id})
+    queue_file_change(canvas_id)
     return {"success": success}
 
 
@@ -255,6 +258,56 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
             await manager.send_personal_message({"type": "ack", "payload": data}, websocket)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+# ── Run lifecycle ── tracks files_changed batches per canvas so the UI isn't
+# left hanging when the HTTP chat call times out but the agent kept working.
+import asyncio as _asyncio_runlifecycle
+from collections import defaultdict as _defaultdict_run
+_active_runs: _defaultdict_run[str, list] = _defaultdict_run(list)
+_pending_file_changes: _defaultdict_run[str, list] = _defaultdict_run(list)
+_run_timers: dict = {}
+
+
+async def _broadcast_run_event(canvas_id: str, state: str, **extra):
+    await manager.broadcast_event("run_event", {"canvas_id": canvas_id, "state": state, **extra})
+
+
+async def _settle_run(canvas_id: str, *, state: str = "settled"):
+    extra = {"file_count": len(_pending_file_changes.get(canvas_id, []))}
+    _pending_file_changes.pop(canvas_id, None)
+    if _active_runs.get(canvas_id):
+        _active_runs[canvas_id][-1]["state"] = state
+    await _broadcast_run_event(canvas_id, state, **extra)
+
+
+async def _schedule_settle(canvas_id: str, delay: float = 5.0):
+    """Emit run_settled after `delay` seconds of quiet since the last file change."""
+    existing = _run_timers.get(canvas_id)
+    if existing and not existing.done():
+        existing.cancel()
+    async def fire():
+        await _asyncio_runlifecycle.sleep(delay)
+        await _settle_run(canvas_id, state="settled")
+    _run_timers[canvas_id] = _asyncio_runlifecycle.create_task(fire())
+
+
+async def track_file_change(canvas_id: str):
+    _pending_file_changes[canvas_id].append(True)
+    # if a run isn't already "running" for this canvas, announce one
+    if not _active_runs.get(canvas_id) or _active_runs[canvas_id][-1].get("state") != "running":
+        _active_runs[canvas_id].append({"state": "running"})
+        await _broadcast_run_event(canvas_id, "running")
+    await _schedule_settle(canvas_id)
+
+
+# Start the settle scheduler thread-safe from sync service calls
+def queue_file_change(canvas_id: str):
+    try:
+        loop = _asyncio_runlifecycle.get_running_loop()
+        loop.create_task(track_file_change(canvas_id))
+    except RuntimeError:
+        pass  # no event loop (should not happen in FastAPI)
 
 
 MIRA_DEFAULT_PROVIDER = os.getenv("HERMES_DEFAULT_PROVIDER", "nvidia")
@@ -450,6 +503,12 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
             _jobs[job_id] = {**_jobs[job_id], "status": "done", "response": reply or "(empty response)"}
         except Exception as e:
             _jobs[job_id] = {**_jobs[job_id], "status": "error", "response": f"{type(e).__name__}: {e}"}
+            # If files were already landing for this canvas, the run is still going — inform UI.
+            if _pending_file_changes.get(canvas_id):
+                try:
+                    await _settle_run(canvas_id, state="interrupted")
+                except Exception:
+                    pass
 
     asyncio.create_task(run())
     return ChatOut(response="", session_id=job_id, canvas_id=canvas_id, canvas_created=canvas_created, tools_used=[])
