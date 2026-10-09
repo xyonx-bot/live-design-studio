@@ -95,6 +95,23 @@ async def delete_canvas_route(canvas_id: str, user: dict = Depends(get_current_u
         raise HTTPException(status_code=404, detail="Canvas not found")
 
 
+class KeepVariant(BaseModel):
+    variant: str
+
+
+@router.post("/canvases/{canvas_id}/pieces/{group}/{name}/keep")
+async def keep_piece_variant(canvas_id: str, group: str, name: str, body: KeepVariant,
+                             user: dict = Depends(get_current_user)):
+    try:
+        result = canvases_service.keep_variant(canvas_id, group, name, body.variant)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    await manager.broadcast_event("file_changed", {
+        "path": f"src/{group}/{name}.preview", "action": "keep",
+        "canvas_id": canvas_id, "variant": body.variant})
+    return result
+
+
 @router.get("/canvases/{canvas_id}/pieces")
 async def canvas_pieces(canvas_id: str, user: dict = Depends(get_current_user)):
     try:
@@ -238,6 +255,90 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
             await manager.send_personal_message({"type": "ack", "payload": data}, websocket)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+# ── Model providers — curated list so the UI is a dropdown not a text box ────
+PROVIDERS = [
+    {"id": "hermes-default", "label": "Default (Hermes api_server)", "base_url": None},  # None → use HERMES_AGENT_URL
+    {"id": "openai-compatible", "label": "OpenAI-compatible (custom)", "base_url": None, "requires_key": True},
+    {"id": "openrouter", "label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY"},
+    {"id": "nvidia", "label": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1", "key_env": "NVIDIA_API_KEY"},
+    {"id": "anthropic", "label": "Anthropic", "base_url": "https://api.anthropic.com/v1", "key_env": "ANTHROPIC_API_KEY"},
+]
+
+
+@router.get("/model-providers")
+async def list_model_providers(user: dict = Depends(get_current_user)):
+    """Provider catalog for the UI picker. KEY_ENV availability is queried server-side (kept secret)."""
+    import os as _os
+    return [
+        {
+            "id": p["id"],
+            "label": p["label"],
+            "requires_key": p.get("requires_key", False),
+            "has_key": bool(p.get("key_env") and _os.getenv(p["key_env"] or "", "")),
+            "can_probe": not p.get("requires_key", False) or bool(_os.getenv(p.get("key_env") or "", "")),
+        }
+        for p in PROVIDERS
+    ]
+
+
+class ValidateModelIn(BaseModel):
+    provider: str
+    model: str
+
+
+@router.post("/model-providers/validate")
+async def validate_model_subscription(body: ValidateModelIn, user: dict = Depends(get_current_user)):
+    """Probe the provider's /v1/models with the stored credentials; returns ok + matched model flag."""
+    provider = next((p for p in PROVIDERS if p["id"] == body.provider), None)
+    if not provider:
+        raise HTTPException(status_code=400, detail="unknown provider")
+    import os as _os
+    base_url = provider.get("base_url") or HERMES_AGENT_URL
+    api_key = _os.getenv(provider.get("key_env") or "", "") if provider.get("key_env") else HERMES_API_KEY
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            r = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+            r.raise_for_status()
+            data = r.json()
+    except httpx.HTTPStatusError as e:
+        return {"valid": False, "error": f"provider HTTP {e.response.status_code}"}
+    except Exception as e:
+        return {"valid": False, "error": f"unreachable: {type(e).__name__}"}
+    models = [m.get("id") for m in data.get("data", [])]
+    if body.model in models:
+        return {"valid": True, "available_models": models[:200]}
+    # Hermes api_server may not list custom aliases; treat as acceptable if provider OK
+    return {"valid": False, "error": f"model id not in provider list", "available_models": models[:200]}
+
+
+class CanvasProviderChoice(BaseModel):
+    provider: str
+    model: str
+
+
+@router.post("/canvases/{canvas_id}/provider-model")
+async def set_canvas_provider_model(canvas_id: str, body: CanvasProviderChoice, user: dict = Depends(get_current_user)):
+    provider = next((p for p in PROVIDERS if p["id"] == body.provider), None)
+    if not provider:
+        raise HTTPException(status_code=400, detail="unknown provider")
+    try:
+        canvases_service.get_canvas(canvas_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
+    canvases_service.set_provider_model(canvas_id, body.provider, body.model)
+    return {"ok": True, "provider": body.provider, "model": body.model}
+
+
+@router.get("/canvases/{canvas_id}/provider-model")
+async def get_canvas_provider_model(canvas_id: str, user: dict = Depends(get_current_user)):
+    try:
+        return canvases_service.get_provider_model(canvas_id) or {
+            "provider": "hermes-default", "model": HERMES_AGENT_MODEL}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Canvas not found")
 
 
 # ── Hermes chat proxy — OpenAI-compatible api_server, history per canvas ─────

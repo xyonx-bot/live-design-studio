@@ -168,15 +168,26 @@
 /* Model picker — normal popover layout, doesn't steal composer space */
 .model-picker { position: relative; }
 .model-picker > button { display: flex; align-items: center; gap: 6px; background: #222229; border: 1px solid #34343a; color: #c9c8cf; padding: 5px 10px; border-radius: 5px; font-size: 11px; white-space: nowrap; }
-.model-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 40; background: #1b1b21; border: 1px solid #2b2b32; border-radius: 6px; padding: 8px; min-width: 220px; box-shadow: 0 10px 28px #00000060; }
+.model-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 40; background: #1b1b21; border: 1px solid #2b2b32; border-radius: 6px; padding: 10px; min-width: 250px; max-width: 320px; box-shadow: 0 10px 28px #00000060; }
+.model-field-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #7a7980; margin-bottom: 5px; }
 .model-menu input { width: 100%; background: #121216; border: 1px solid #34343a; border-radius: 4px; padding: 7px 9px; color: #e7e4de; font-size: 12px; outline: none; margin-bottom: 6px; }
 .model-menu input:focus { border-color: #b9ed46; }
 .model-menu .model-error { color: #ed8a8a; font-size: 10px; margin: 2px 0 6px; }
-.model-menu .model-list { max-height: 180px; overflow: auto; display: flex; flex-direction: column; margin-bottom: 6px; }
-.model-menu .model-list button { text-align: left; background: transparent; border: 0; color: #d9d6cf; padding: 6px 8px; font-size: 11px; border-radius: 4px; }
-.model-menu .model-list button:hover { background: #24242b; }
-.model-menu .model-list button.active { background: #2b351f; color: #b9ed46; }
-.model-menu > button[type=button] { width: 100%; background: #b9ed46; color: #1a2410; border: 0; padding: 7px 10px; font-size: 11px; font-weight: 700; border-radius: 4px; }
+.model-menu .model-warn { color: #d7bb70; font-size: 10px; margin: 2px 0 6px; }
+.model-menu .model-list-scroll { max-height: 180px; overflow: auto; display: flex; flex-direction: column; margin-bottom: 8px; border: 1px solid #2b2b32; border-radius: 4px; }
+.model-menu .model-option { text-align: left; background: transparent; border: 0; color: #d9d6cf; padding: 6px 8px; font-size: 11px; border-radius: 0; cursor: pointer; }
+.model-menu .model-option:hover { background: #24242b; }
+.model-menu .model-option.active { background: #2b351f; color: #b9ed46; }
+.model-menu .model-empty-hint { color: #66666f; font-size: 10px; padding: 8px; }
+.model-menu .model-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.model-menu .model-actions button { background: #222229; border: 1px solid #34343a; color: #c9c8cf; padding: 6px 10px; font-size: 11px; font-weight: 500; border-radius: 4px; }
+.model-menu .model-actions .model-apply { background: #b9ed46; color: #1a2410; border: 0; font-weight: 700; }
+.model-picker-caret { color: #9b9aa1; font-size: 10px; }
+.agent-state { color: #b9ed46; font-size: 10px; display: inline-flex; align-items: center; gap: 6px; }
+.agent-state.error { color: #ed8a8a; }
+.panel-heading-actions { display: flex; align-items: center; gap: 8px; }
+.clear-history-btn { background: transparent; border: 1px solid #34343a; color: #8b8a92; font-size: 10px; padding: 4px 8px; border-radius: 3px; cursor: pointer; }
+.clear-history-btn:hover { color: #eeeae1; border-color: #b9ed46; }
 .attach { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #222229; border: 1px solid #34343a; border-radius: 4px; color: #9b9aa1; cursor: pointer; }
 .attach:hover { color: #eeeae1; }
 .attach-chip { font-size: 10px; color: #b9ed46; }

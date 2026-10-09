@@ -5,7 +5,7 @@ import {
   Component as ComponentIcon, Eye, Grid2X2, History, ImagePlus,
   LayoutTemplate, Maximize2, MessageSquareText, Monitor,
   PanelLeft, PanelRight, Search, Send,
-  Smartphone, Sparkles, Tablet, WandSparkles, X,
+  Smartphone, Sparkles, Tablet, WandSparkles,
 } from 'lucide-react'
 
 type ViewMode = 'single' | 'grid' | 'page'
@@ -436,7 +436,7 @@ function EmptyStage({ text }: { text: string }) {
 }
 
 function ActivityPanel({
-  messages, activities, isLoading, loadingStartedAt, prompt, setPrompt, onSend, onClear, onRetry,
+  messages, activities, isLoading, loadingStartedAt, prompt, setPrompt, onSend, onClear,
   currentModel, onModelChange, onImagePick, attachedImage,
 }: {
   messages: ChatMessage[]
@@ -447,7 +447,6 @@ function ActivityPanel({
   setPrompt: (v: string) => void
   onSend: () => void
   onClear: () => void
-  onRetry: () => void
   currentModel: string
   onModelChange: (m: string) => Promise<void>
   onImagePick?: (files: FileList | null) => void
@@ -474,8 +473,11 @@ function ActivityPanel({
           <div className="eyebrow-label">AGENT ACTIVITY</div>
           <h2>{tab === 'inbox' ? 'Agent inbox' : 'Building in real time'}</h2>
         </div>
-        <div className={cn('agent-status', !isLoading && 'idle')}>
-          <span className="pulse" /> {isLoading ? `Working · ${elapsed}s` : 'Idle'}
+        <div className="panel-heading-actions">
+          <button type="button" className="clear-history-btn" title="Clear chat history" onClick={onClear}>Clear</button>
+          <div className={cn('agent-status', !isLoading && 'idle')}>
+            <span className="pulse" /> {isLoading ? `Working · ${elapsed}s` : 'Idle'}
+          </div>
         </div>
       </div>
       <div className="inbox-tabs" role="tablist">
@@ -558,12 +560,12 @@ function ActivityPanel({
               <ImagePlus size={13} />
               <input type="file" accept="image/*" hidden onChange={(e) => onImagePick?.(e.target.files)} />
             </label>
-            {attachedImage && <span className="attach-chip" title={attachedImage.name}>🖼 {attachedImage.name.slice(0, 18)}</span>}
+            {attachedImage && <span className="attach-chip" title={attachedImage.name}>{attachedImage.name.slice(0, 18)}</span>}
           </span>
-          <span><kbd>↵</kbd> to send</span>
-          <span style={{ display: 'flex', gap: 6 }}>
-            {isLoading && <button aria-label="Retry" onClick={onRetry} title="Retry last message" style={{ background: 'transparent', border: '1px solid #34343a', color: '#8b8a92', width: 'auto', padding: '0 8px', borderRadius: 4 }}>Retry</button>}
-            <button aria-label="Clear chat" onClick={onClear} style={{ background: 'transparent', border: '1px solid #34343a', color: '#8b8a92', width: 'auto', padding: '0 8px', borderRadius: 4 }}><X size={13} /></button>
+          <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {isLoading && elapsed && (
+              <span className="agent-state" title="Agent working" aria-live="polite">{elapsed}s</span>
+            )}
             <button aria-label="Send prompt" disabled={!prompt.trim() || isLoading} onClick={onSend}><Send size={15} /></button>
           </span>
         </div>
@@ -578,50 +580,69 @@ function ModelPicker({ currentModel, onChange }: { currentModel: string; onChang
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [warn, setWarn] = useState<string | null>(null)
 
-  const load = async () => {
-    const r = await api('/api/models')
-    if (r.ok) {
-      const d = await r.json()
-      setOptions(d.models ?? [])
-      setDraft(d.current ?? '')
+  useEffect(() => {
+    if (open) {
+      setDraft(currentModel)
+      setWarn(null); setError('')
+      ;(async () => {
+        const r = await api('/api/models')
+        if (r.ok) {
+          const d = await r.json()
+          setOptions(Array.isArray(d.models) ? d.models : [])
+        }
+      })()
     }
-  }
-  useEffect(() => { if (open) { void load(); setDraft(currentModel) } }, [open]) // eslint-disable-line
+  }, [open]) // eslint-disable-line
 
   const apply = async (m: string) => {
     if (!m.trim()) return
     setBusy(true); setError('')
     try {
-      // validate against api_server list when available
-      if (options.length && !options.includes(m)) {
-        setError(`not in api_server list`)
-        setBusy(false)
-        return
-      }
       await onChange(m.trim())
       setOpen(false)
     } catch (e) { setError(String(e)) } finally { setBusy(false) }
+  }
+
+  const onUseClicked = async () => {
+    const candidate = draft.trim()
+    if (!candidate) return
+    if (options.length && !options.includes(candidate) && !warn) {
+      setWarn(`"${candidate}" is not listed by this provider — possibly an alias. Click again to use it anyway.`)
+      return
+    }
+    await apply(candidate)
   }
 
   return (
     <span className="model-picker">
       <button type="button" onClick={() => setOpen(!open)} title={currentModel || 'Set chat model'}>
         <span className="model-pill-label">{(currentModel || 'model').split('/').pop()}</span>
+        <span className="model-pill-caret">▾</span>
       </button>
       {open && (
         <div className="model-menu">
-          <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="model id, e.g. hermes-agent"
-            onKeyDown={(e) => { if (e.key === 'Enter') apply(draft); if (e.key === 'Escape') setOpen(false) }} />
+          <label className="model-field-label">Model</label>
+          <input autoFocus value={draft} onChange={(e) => { setDraft(e.target.value); setWarn(null) }}
+            placeholder="e.g. moonshotai/kimi-k3"
+            onKeyDown={(e) => { if (e.key === 'Enter') onUseClicked(); if (e.key === 'Escape') setOpen(false) }} />
+          {warn && <div className="model-warn">{warn}</div>}
           {error && <div className="model-error">{error}</div>}
-          {options.length > 0 && (
-            <div className="model-list">
-              {options.slice(0, 30).map((o) => (
-                <button key={o} type="button" className={cn(o === currentModel && 'active')} onClick={() => apply(o)}>{o}</button>
+          {options.length > 0 ? (
+            <div className="model-list-scroll">
+              {options.map((o) => (
+                <button key={o} type="button" className={cn('model-option', o === currentModel && 'active')} onClick={() => { setDraft(o); setWarn(null) }}>{o}</button>
               ))}
             </div>
+          ) : (
+            <div className="model-empty-hint">Provider's model list is empty — type an id above.</div>
           )}
-          <button disabled={busy || !draft.trim()} onClick={() => apply(draft)}>{busy ? 'Saving…' : 'Use model'}</button>
+          <div className="model-actions">
+            <button type="button" className="model-apply" disabled={busy || !draft.trim()} onClick={onUseClicked}>
+              {busy ? 'Saving…' : 'Use model'}
+            </button>
+          </div>
         </div>
       )}
     </span>
@@ -904,13 +925,14 @@ export default function App() {
     setCurrentModel(m)
   }
 
-  const retry = () => {
+  const retry = () => {  // wired later via last-error banner
     const last = lastMessageRef.current[canvasId]
     if (!last || isLoading) return
     setPrompt(last)
     // send on next tick after prompt update
     setTimeout(sendMessage, 0)
   }
+  void retry  // silence unused-var until banner is wired
 
   const clearChat = async () => {
     const sid = sessionsRef.current[canvasId]
@@ -971,7 +993,6 @@ export default function App() {
             setPrompt={setPrompt}
             onSend={sendMessage}
             onClear={clearChat}
-            onRetry={retry}
             currentModel={currentModel}
             onModelChange={setModel}
             attachedImage={attachedImage}

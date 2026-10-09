@@ -1,0 +1,63 @@
+[
+  {
+    "role": "user",
+    "content": "hi",
+    "timestamp": "2026-10-08T19:03:31.599435"
+  },
+  {
+    "role": "assistant",
+    "content": "NVIDIA NIM rate-limited every one of 3 attempts \u2014 it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: HTTP 429: {\"status\":429,\"title\":\"Too Many Requests\"}",
+    "timestamp": "2026-10-08T19:03:41.688392"
+  },
+  {
+    "role": "user",
+    "content": "hiii",
+    "timestamp": "2026-10-08T19:04:31.542191"
+  },
+  {
+    "role": "assistant",
+    "content": "NVIDIA NIM rate-limited every one of 3 attempts \u2014 it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: HTTP 429: {\"status\":429,\"title\":\"Too Many Requests\"}",
+    "timestamp": "2026-10-08T19:04:40.950261"
+  },
+  {
+    "role": "user",
+    "content": "hii",
+    "timestamp": "2026-10-08T19:05:00.569248"
+  },
+  {
+    "role": "assistant",
+    "content": "NVIDIA NIM rate-limited every one of 3 attempts \u2014 it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: HTTP 429: {\"status\":429,\"title\":\"Too Many Requests\"}",
+    "timestamp": "2026-10-08T19:05:10.808550"
+  },
+  {
+    "role": "user",
+    "content": "ananylzye and tell me hwomany compent weneed to make",
+    "timestamp": "2026-10-08T19:06:14.784377",
+    "image_url": "https://cdn.joyverse.fun/chat/48c5ebfe6b134b8f.png"
+  },
+  {
+    "role": "assistant",
+    "content": "NVIDIA NIM rate-limited every one of 3 attempts \u2014 it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: HTTP 429: {\"status\":429,\"title\":\"Too Many Requests\"}",
+    "timestamp": "2026-10-08T19:08:28.214635"
+  },
+  {
+    "role": "user",
+    "content": "u did ?",
+    "timestamp": "2026-10-08T19:11:48.152043"
+  },
+  {
+    "role": "assistant",
+    "content": "NVIDIA NIM rate-limited every one of 3 attempts \u2014 it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: HTTP 429: {\"status\":429,\"title\":\"Too Many Requests\"}",
+    "timestamp": "2026-10-08T19:11:57.917523"
+  },
+  {
+    "role": "user",
+    "content": "bro",
+    "timestamp": "2026-10-08T19:12:13.535144"
+  },
+  {
+    "role": "assistant",
+    "content": "NVIDIA NIM rate-limited every one of 3 attempts \u2014 it looks temporarily unavailable. Wait a minute and send /retry, or switch models with /model. To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: HTTP 429: {\"status\":429,\"title\":\"Too Many Requests\"}",
+    "timestamp": "2026-10-08T19:12:24.094444"
+  }
+]

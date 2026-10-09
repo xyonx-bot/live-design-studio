@@ -126,6 +126,21 @@ def get_model(canvas_id: str) -> Optional[str]:
     return _read_meta(canvas_id).get("model")
 
 
+def set_provider_model(canvas_id: str, provider: str, model: str) -> dict:
+    meta = get_canvas(canvas_id)
+    meta["provider"] = provider
+    meta["model"] = model
+    _write_meta(canvas_id, meta)
+    return meta
+
+
+def get_provider_model(canvas_id: str) -> Optional[dict]:
+    meta = _read_meta(canvas_id)
+    if meta.get("provider") and meta.get("model"):
+        return {"provider": meta["provider"], "model": meta["model"]}
+    return None
+
+
 def _history_path(canvas_id: str) -> Path:
     return _dir(canvas_id) / "chat.json"
 
@@ -155,13 +170,30 @@ def clear_history(canvas_id: str) -> None:
         p.unlink()
 
 
-_PIECE_RE = re.compile(r"^(?P<name>.+)\.preview\.(tsx|jsx)$")
+_PIECE_RE = re.compile(r"^(?P<name>.+?)(?:\.(?P<variant>[a-z0-9]+))?\.preview\.(?P<kind>tsx|jsx)$")
+_PIECE_HTML_RE = re.compile(r"^(?P<name>.+?)(?:\.(?P<variant>[a-z0-9]+))?\.preview\.html$")
+
+
+def _parse_piece_filename(fname: str) -> Optional[dict]:
+    m = _PIECE_RE.match(fname)
+    if m:
+        return {"name": m.group("name"), "variant": m.group("variant") or "default",
+                "kind": m.group("kind"), "file": fname}
+    m = _PIECE_HTML_RE.match(fname)
+    if m:
+        return {"name": m.group("name"), "variant": m.group("variant") or "default",
+                "kind": "html", "file": fname}
+    return None
 
 
 def list_pieces(canvas_id: str) -> List[dict]:
-    """Return [{name, group, file, kind}] for every preview/jsx/html file under the canvas."""
+    """Return [{name, group, file, kind, variant, variants:[{variant,file,kind}], isCanonical}] for every piece under the canvas.
+
+    Variants are files like Button.rounded.preview.tsx next to canonical Button.preview.tsx.
+    A piece with variants exposes them under .variants; canonical is the one without a variant suffix.
+    """
     d = _dir(canvas_id)
-    pieces: List[dict] = []
+    flat: List[dict] = []
     for group in ("components", "sections", "layout"):
         gdir = d / "src" / group
         if not gdir.exists():
@@ -169,25 +201,84 @@ def list_pieces(canvas_id: str) -> List[dict]:
         for f in sorted(gdir.iterdir()):
             if not f.is_file():
                 continue
-            # raw html piece
+            # raw (non-preview) html piece
             if f.suffix == ".html" and not f.name.endswith(".preview.html"):
-                pieces.append({"name": f.stem, "group": group, "file": f.name, "kind": "html"})
+                flat.append({"name": f.stem, "group": group, "file": f.name, "kind": "html",
+                             "variant": "default"})
                 continue
-            m = _PIECE_RE.match(f.name)
-            if m:
-                pieces.append({"name": m.group("name"), "group": group, "file": f.name,
-                               "kind": f.suffix.lstrip(".")})
-                continue
-            if f.suffix == ".html" and f.name.endswith(".preview.html"):
-                pieces.append({"name": f.name[:-len(".preview.html")], "group": group,
-                               "file": f.name, "kind": "html"})
+            info = _parse_piece_filename(f.name)
+            if info:
+                flat.append({"name": info["name"], "group": group, "file": info["file"],
+                             "kind": info["kind"], "variant": info["variant"]})
+
+    # Group by (name, group)
+    out: dict = {}
+    for p in flat:
+        key = (p["group"], p["name"])
+        bucket = out.setdefault(key, [])
+        bucket.append(p)
+
+    pieces: List[dict] = []
+    for (group, name), bucket in out.items():
+        bucket.sort(key=lambda b: (b["variant"] != "default", b["variant"]))
+        canonical = next((b for b in bucket if b["variant"] == "default"), None)
+        if canonical is None:
+            canonical = bucket[0]
+        pieces.append({
+            "name": name,
+            "group": group,
+            "file": canonical["file"],
+            "kind": canonical["kind"],
+            "variant": "default",
+            "variants": [
+                {"variant": b["variant"], "file": b["file"], "kind": b["kind"]} for b in bucket
+            ],
+        })
+    pieces.sort(key=lambda p: (p["group"], p["name"]))
     return pieces
 
 
-def resolve_piece_file(canvas_id: str, group: str, name: str) -> Optional[Path]:
-    """Find the preview file for a piece (any supported kind)."""
-    d = _dir(canvas_id) / group
+def keep_variant(canvas_id: str, group: str, name: str, variant: str) -> dict:
+    """Promote `variant` file to canonical `<name>.preview.<ext>`. Archived canonical goes to _archived/<ts>-<file>."""
+    d = _dir(canvas_id) / "src" / group
     if not d.exists():
+        raise FileNotFoundError(f"Group {group} not found")
+    if variant == "default":
+        return {"ok": True, "unchanged": True}
+
+    src = None
+    for ext in ("tsx", "jsx", "html"):
+        cand = d / f"{name}.{variant}.preview.{ext}"
+        if cand.exists():
+            src = cand
+            break
+    if src is None:
+        raise FileNotFoundError(f"Variant {variant} not found for {group}/{name}")
+
+    ext = src.suffix.lstrip(".")
+    canonical = d / f"{name}.preview.{ext}"
+    archived = d / "_archived"
+    archived.mkdir(exist_ok=True)
+    if canonical.exists():
+        canonical.rename(archived / f"{int(datetime.utcnow().timestamp())}-{canonical.name}")
+    src.rename(canonical)
+    # Remove any other variants of same ext (they are superseded); keep diverse-ext ones
+    for f in list(d.glob(f"{name}.*.preview.{ext}")):
+        if f.name != f"{name}.preview.{ext}" and f.parent != archived:
+            f.rename(archived / f"{int(datetime.utcnow().timestamp())}-{f.name}")
+    return {"ok": True, "canonical": canonical.name, "archived_dir": "_archived"}
+
+
+def resolve_piece_file(canvas_id: str, group: str, name: str, variant: Optional[str] = None) -> Optional[Path]:
+    """Find the preview file for a piece (any supported kind). variant=None→canonical."""
+    d = _dir(canvas_id) / "src" / group
+    if not d.exists():
+        return None
+    if variant and variant != "default":
+        for cand in (f"{name}.{variant}.preview.tsx", f"{name}.{variant}.preview.jsx", f"{name}.{variant}.preview.html"):
+            p = d / cand
+            if p.exists():
+                return p
         return None
     for cand in (f"{name}.preview.tsx", f"{name}.preview.jsx", f"{name}.preview.html", f"{name}.html"):
         p = d / cand
