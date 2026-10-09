@@ -390,15 +390,31 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
 
     async def run():
         history = canvases_service.load_history(canvas_id)
-        model = canvases_service.get_model(canvas_id) or HERMES_AGENT_MODEL
+        pm = canvases_service.get_provider_model(canvas_id)
+        provider_id = (pm or {}).get("provider", "hermes-default")
+        model = (pm or {}).get("model") or canvases_service.get_model(canvas_id) or HERMES_AGENT_MODEL
+
+        provider = next((p for p in PROVIDERS if p["id"] == provider_id), None)
+        base_url = provider.get("base_url") if provider else None
+        if not base_url:
+            base_url = HERMES_AGENT_URL.rstrip("/")
+        base_url = base_url.rstrip("/")
+
+        import os as _os
+        if provider and provider.get("key_env"):
+            api_key = _os.getenv(provider["key_env"], "")
+        else:
+            api_key = HERMES_API_KEY
+
         headers = {"Content-Type": "application/json"}
-        if HERMES_API_KEY:
-            headers["Authorization"] = f"Bearer {HERMES_API_KEY}"
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
         try:
             # Persist the user's turn immediately so a refresh / reload doesn't lose it.
             canvases_service.append_history(canvas_id, "user", body.message, image_url=body.image_url)
             async with httpx.AsyncClient(timeout=600.0) as client:
-                resp = await client.post(f"{HERMES_AGENT_URL}/v1/chat/completions",
+                resp = await client.post(f"{base_url}/v1/chat/completions",
                                          json={"model": model,
                                                "messages": messages_payload(canvas_id, body.message, history, image_url=body.image_url),
                                                "stream": False},

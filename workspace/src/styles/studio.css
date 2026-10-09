@@ -196,8 +196,20 @@
 .prompt-actions button { border: 0; background: #b9ed46; color: #1a2410; width: 27px; height: 27px; display: grid; place-items: center; border-radius: 4px; }
 .prompt-actions button:disabled { opacity: .35; }
 /* The model picker pill is text, not an icon — undo the square-icon box. */
-.prompt-actions .model-picker > button { width: auto; height: auto; display: inline-flex; padding: 5px 10px; background: #222229; border: 1px solid #34343a; color: #c9c8cf; font-size: 11px; gap: 5px; }
-.prompt-actions .model-picker .model-pill-label { display: inline-block; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.prompt-actions .model-picker > button { width: auto; height: auto; display: inline-flex; padding: 5px 10px; background: #222229; border: 1px solid #34343a; color: #c9c8cf; font-size: 11px; gap: 6px; }
+.prompt-actions .model-picker .model-pill-provider { color: #b9ed46; font-weight: 700; font-size: 9px; letter-spacing: 0.05em; }
+.prompt-actions .model-picker .model-pill-divider { width: 1px; height: 10px; background: #34343a; }
+.prompt-actions .model-picker .model-pill-label { display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.prompt-actions .model-picker .model-pill-caret { color: #9b9aa1; font-size: 10px; }
+
+/* Inside the opened model menu, default buttons back to normal — they're OUTSIDE the square-icon context */
+.prompt-actions .model-menu button { width: auto; height: auto; background: transparent; border: 0; color: #d9d6cf; padding: 6px 10px; border-radius: 4px; display: inline-flex; align-items: center; }
+.prompt-actions .model-menu .model-apply { background: #b9ed46; color: #1a2410; font-weight: 700; }
+.model-menu select { width: 100%; background: #121216; border: 1px solid #34343a; border-radius: 4px; padding: 7px 9px; color: #e7e4de; font-size: 12px; outline: none; margin-bottom: 6px; }
+.model-menu select:focus { border-color: #b9ed46; }
+.model-check { font-size: 10px; padding: 5px 8px; border-radius: 4px; margin-bottom: 6px; }
+.model-check.ok { color: #b9ed46; background: #22341c; border: 1px solid #2e4726; }
+.model-check.fail { color: #ed8a8a; background: #3a2020; border: 1px solid #4a2828; }
 /* The inline-styled clear/retry buttons are text too — keep them from collapsing. */
 .prompt-actions > span:last-child > button { width: auto; height: 27px; display: inline-flex; align-items: center; justify-content: center; }
 .prompt-actions > span:last-child > button[aria-label="Clear chat"] { width: 27px; }

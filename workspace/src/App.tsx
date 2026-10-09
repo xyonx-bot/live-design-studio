@@ -437,7 +437,7 @@ function EmptyStage({ text }: { text: string }) {
 
 function ActivityPanel({
   messages, activities, isLoading, loadingStartedAt, prompt, setPrompt, onSend, onClear,
-  currentModel, onModelChange, onImagePick, attachedImage,
+  currentModel, currentProvider, onApplyModel, onImagePick, attachedImage,
 }: {
   messages: ChatMessage[]
   activities: ActivityEvent[]
@@ -448,7 +448,8 @@ function ActivityPanel({
   onSend: () => void
   onClear: () => void
   currentModel: string
-  onModelChange: (m: string) => Promise<void>
+  currentProvider: string
+  onApplyModel: (provider: string, model: string) => Promise<void>
   onImagePick?: (files: FileList | null) => void
   attachedImage?: File | null
 }) {
@@ -555,7 +556,7 @@ function ActivityPanel({
         />
         <div className="prompt-actions">
           <span className="prompt-controls">
-            <ModelPicker currentModel={currentModel} onChange={onModelChange} />
+            <ModelPicker currentModel={currentModel} currentProvider={currentProvider} onChange={onApplyModel} />
             <label className="attach" title="Attach image">
               <ImagePlus size={13} />
               <input type="file" accept="image/*" hidden onChange={(e) => onImagePick?.(e.target.files)} />
@@ -574,72 +575,130 @@ function ActivityPanel({
   )
 }
 
-function ModelPicker({ currentModel, onChange }: { currentModel: string; onChange: (m: string) => Promise<void> }) {
+type ProviderOption = { id: string; label: string; requires_key?: boolean; has_key?: boolean; can_probe?: boolean }
+
+function ModelPicker({ currentModel, currentProvider, onChange }: {
+  currentModel: string
+  currentProvider: string
+  onChange: (provider: string, model: string) => Promise<void>
+}) {
   const [open, setOpen] = useState(false)
-  const [options, setOptions] = useState<string[]>([])
+  const [providers, setProviders] = useState<ProviderOption[]>([])
+  const [provider, setProvider] = useState<string>(currentProvider || 'openrouter')
+  const [models, setModels] = useState<string[]>([])       // provider's advertised models
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [warn, setWarn] = useState<string | null>(null)
+  const [validation, setValidation] = useState<null | { valid: boolean; error?: string }>(null)
 
   useEffect(() => {
     if (open) {
+      setProvider(currentProvider || 'openrouter')
       setDraft(currentModel)
-      setWarn(null); setError('')
+      setError(''); setValidation(null)
       ;(async () => {
-        const r = await api('/api/models')
-        if (r.ok) {
-          const d = await r.json()
-          setOptions(Array.isArray(d.models) ? d.models : [])
+        // Provider list (always 2 entries for now, both env-authenticated server-side)
+        const rp = await api('/api/model-providers')
+        if (rp.ok) {
+          const list = await rp.json()
+          setProviders(list.filter((p: ProviderOption) => p.id === 'openrouter' || p.id === 'nvidia'))
+        }
+        // Models for current provider
+        const rm = await api(`/api/model-providers/validate`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ provider: currentProvider || 'openrouter', model: currentModel }) })
+        if (rm.ok) {
+          const d = await rm.json()
+          setModels(d.available_models ?? [])
         }
       })()
     }
   }, [open]) // eslint-disable-line
 
-  const apply = async (m: string) => {
-    if (!m.trim()) return
+  const refreshModelsForProvider = async (pId: string) => {
+    setModels([])
+    setValidation(null)
+    setError('')
+    try {
+      const rm = await api(`/api/model-providers/validate`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ provider: pId, model: '' })
+      })
+      if (rm.ok) {
+        const d = await rm.json()
+        setModels(d.available_models ?? [])
+      }
+    } catch (e) { setError(String(e)) }
+  }
+
+  const check = async () => {
+    if (!draft.trim()) return
+    setBusy(true); setValidation(null); setError('')
+    try {
+      const rm = await api(`/api/model-providers/validate`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ provider, model: draft.trim() })
+      })
+      if (rm.ok) setValidation(await rm.json())
+      else setError(`validate failed: ${rm.status}`)
+    } catch (e) { setError(String(e)) } finally { setBusy(false) }
+  }
+
+  const useIt = async () => {
+    if (!draft.trim()) return
     setBusy(true); setError('')
     try {
-      await onChange(m.trim())
+      await onChange(provider, draft.trim())
       setOpen(false)
     } catch (e) { setError(String(e)) } finally { setBusy(false) }
   }
 
-  const onUseClicked = async () => {
-    const candidate = draft.trim()
-    if (!candidate) return
-    if (options.length && !options.includes(candidate) && !warn) {
-      setWarn(`"${candidate}" is not listed by this provider — possibly an alias. Click again to use it anyway.`)
-      return
-    }
-    await apply(candidate)
-  }
+  const displayModel = (currentModel || 'model').split('/').pop()
 
   return (
     <span className="model-picker">
-      <button type="button" onClick={() => setOpen(!open)} title={currentModel || 'Set chat model'}>
-        <span className="model-pill-label">{(currentModel || 'model').split('/').pop()}</span>
+      <button type="button" onClick={() => setOpen(!open)} title={`${currentModel} via ${currentProvider || 'default provider'}`}>
+        <span className="model-pill-provider">{(currentProvider || 'default').toUpperCase()}</span>
+        <span className="model-pill-divider" />
+        <span className="model-pill-label">{displayModel}</span>
         <span className="model-pill-caret">▾</span>
       </button>
       {open && (
-        <div className="model-menu">
+        <div className="model-menu" onClick={(e) => e.stopPropagation()}>
+          <label className="model-field-label">Provider</label>
+          <select value={provider} onChange={(e) => { setProvider(e.target.value); refreshModelsForProvider(e.target.value) }}>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}{p.has_key ? '' : ' (no key — set env)'}
+              </option>
+            ))}
+          </select>
+
           <label className="model-field-label">Model</label>
-          <input autoFocus value={draft} onChange={(e) => { setDraft(e.target.value); setWarn(null) }}
+          <input autoFocus value={draft}
+            onChange={(e) => { setDraft(e.target.value); setValidation(null) }}
             placeholder="e.g. moonshotai/kimi-k3"
-            onKeyDown={(e) => { if (e.key === 'Enter') onUseClicked(); if (e.key === 'Escape') setOpen(false) }} />
-          {warn && <div className="model-warn">{warn}</div>}
-          {error && <div className="model-error">{error}</div>}
-          {options.length > 0 ? (
-            <div className="model-list-scroll">
-              {options.map((o) => (
-                <button key={o} type="button" className={cn('model-option', o === currentModel && 'active')} onClick={() => { setDraft(o); setWarn(null) }}>{o}</button>
+            onKeyDown={(e) => { if (e.key === 'Enter') useIt(); if (e.key === 'Escape') setOpen(false) }} />
+
+          {models.length > 0 && (
+            <div className="model-list-scroll" role="listbox">
+              {models.map((m) => (
+                <button key={m} type="button" className={cn('model-option', m === currentModel && 'active')}
+                  onClick={() => { setDraft(m); setValidation(null) }}>{m}</button>
               ))}
             </div>
-          ) : (
-            <div className="model-empty-hint">Provider's model list is empty — type an id above.</div>
           )}
+
+          {validation && (
+            <div className={cn('model-check', validation.valid ? 'ok' : 'fail')}>
+              {validation.valid ? '✓ Model reachable' : (validation.error || 'Model not listed')}
+            </div>
+          )}
+          {error && <div className="model-error">{error}</div>}
+
           <div className="model-actions">
-            <button type="button" className="model-apply" disabled={busy || !draft.trim()} onClick={onUseClicked}>
+            <button type="button" onClick={check} disabled={busy || !draft.trim()}>
+              {busy ? 'Checking…' : 'Check'}
+            </button>
+            <button type="button" className="model-apply" onClick={useIt} disabled={busy || !draft.trim()}>
               {busy ? 'Saving…' : 'Use model'}
             </button>
           </div>
@@ -710,6 +769,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [showNewCanvas, setShowNewCanvas] = useState(false)
   const [currentModel, setCurrentModel] = useState<string>('')
+  const [currentProvider, setCurrentProvider] = useState<string>('openrouter')
   const [stage, setStageInternal] = useState<StageCfg>(defaultStage)
   const [attachedImage, setAttachedImage] = useState<File | null>(null)
   const lastMessageRef = useRef<Record<string, string>>({})
@@ -764,6 +824,15 @@ export default function App() {
       messagesRef.current[id] = hist.map((m: any) => ({ role: m.role, content: m.content, timestamp: new Date(m.timestamp), image_url: m.image_url }))
       if (data.session_id) sessionsRef.current[id] = data.session_id
       if (data.model) setCurrentModel(data.model)
+      // provider+model via the dedicated endpoint
+      try {
+        const rp = await api(`/api/canvases/${encodeURIComponent(id)}/provider-model`)
+        if (rp.ok) {
+          const pm = await rp.json()
+          setCurrentProvider(pm.provider ?? 'openrouter')
+          setCurrentModel(pm.model ?? data.model ?? '')
+        }
+      } catch { /* optional */ }
       setMessageTick((t) => t + 1)
       // resume polling an in-flight job
       if (data.running_job && loadingFor.current[id]?.jobId !== data.running_job.job_id) {
@@ -920,8 +989,13 @@ export default function App() {
     }
   }
 
-  const setModel = async (m: string) => {
-    await api(`/api/canvases/${encodeURIComponent(canvasId)}/model`, { method: 'POST', body: JSON.stringify({ model: m }) })
+  const setProviderModel = async (provider: string, m: string) => {
+    await api(`/api/canvases/${encodeURIComponent(canvasId)}/provider-model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model: m }),
+    })
+    setCurrentProvider(provider)
     setCurrentModel(m)
   }
 
@@ -994,7 +1068,8 @@ export default function App() {
             onSend={sendMessage}
             onClear={clearChat}
             currentModel={currentModel}
-            onModelChange={setModel}
+            currentProvider={currentProvider}
+            onApplyModel={setProviderModel}
             attachedImage={attachedImage}
             onImagePick={(files) => setAttachedImage(files?.[0] ?? null)}
           />
