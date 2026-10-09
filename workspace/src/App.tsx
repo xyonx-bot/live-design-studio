@@ -76,7 +76,8 @@ interface ActivityEvent {
 const TOKEN_KEY = 'lds_token'
 const CANVAS_KEY = 'lds_canvas'
 const getToken = () => localStorage.getItem(TOKEN_KEY)
-const getSavedCanvas = () => localStorage.getItem(CANVAS_KEY) || 'default'
+const NO_CANVAS = '__none__'
+const getSavedCanvas = () => localStorage.getItem(CANVAS_KEY) || NO_CANVAS
 const saveCanvas = (id: string) => localStorage.setItem(CANVAS_KEY, id)
 
 async function api(path: string, init: RequestInit = {}) {
@@ -590,26 +591,26 @@ function ModelPicker({ currentModel, currentProvider, onChange }: {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [validation, setValidation] = useState<null | { valid: boolean; error?: string }>(null)
+  const openDebounceRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (open) {
       setProvider(currentProvider || 'openrouter')
       setDraft(currentModel)
       setError(''); setValidation(null)
-      ;(async () => {
-        // Provider list (always 2 entries for now, both env-authenticated server-side)
-        const rp = await api('/api/model-providers')
-        if (rp.ok) {
-          const list = await rp.json()
-          setProviders(list)   // backend already restricts to openrouter + nvidia
-        }
-        // Models for current provider
-        const rm = await api(`/api/model-providers/validate`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ provider: currentProvider || 'openrouter', model: currentModel }) })
-        if (rm.ok) {
-          const d = await rm.json()
-          setModels(d.available_models ?? [])
-        }
-      })()
+      // Only load when the user actually opened the menu. No auto-run on mount from hot-reload.
+      if (openDebounceRef.current) clearTimeout(openDebounceRef.current)
+      openDebounceRef.current = setTimeout(() => {
+        ;(async () => {
+          const rp = await api('/api/model-providers')
+          if (rp.ok) setProviders(await rp.json())
+          const rm = await api(`/api/model-providers/validate`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ provider: currentProvider || 'openrouter', model: currentModel }) })
+          if (rm.ok) {
+            const d = await rm.json()
+            setModels(d.available_models ?? [])
+          }
+        })()
+      }, 0)  // next tick — guarantees the load only fires from a user click
     }
   }, [open]) // eslint-disable-line
 
@@ -890,7 +891,7 @@ export default function App() {
     setStage(loadStage(id))
     void hydrateCanvas(id)
   }
-  const newCanvas = () => setShowNewCanvas(true)
+  const newCanvas = () => { setCanvasId(NO_CANVAS); saveCanvas(NO_CANVAS); setSelectedRaw(''); setActivities([]) }
 
   // stage setter exposed to StageControls (defined above App for hoistability)
   const setStage = (s: StageCfg) => { setStageInternal(s); saveStage(canvasId, s) }
@@ -961,11 +962,12 @@ export default function App() {
       }
     }
 
+    const apiCanvasId = canvasId === NO_CANVAS ? null : canvasId
     setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text + (imageUrl ? `\n\n[${attachedImage?.name}](${imageUrl})` : ''), timestamp: new Date() }])
     try {
       const res = await api('/api/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: text, image_url: imageUrl, session_id: sessionId, canvas_id: canvasId }),
+        body: JSON.stringify({ message: text, image_url: imageUrl, session_id: sessionId, canvas_id: apiCanvasId }),
       })
       setAttachedImage(null)
       const start = await res.json()

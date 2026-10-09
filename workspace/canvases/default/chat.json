@@ -3,5 +3,25 @@
     "role": "user",
     "content": "hi",
     "timestamp": "2026-10-09T06:53:02.898341"
+  },
+  {
+    "role": "user",
+    "content": "hi",
+    "timestamp": "2026-10-09T07:04:05.484209"
+  },
+  {
+    "role": "assistant",
+    "content": "Hey! I'm your build agent \u2014 describe any UI piece (button, hero, pricing section, full page\u2026) and I'll build it live in the canvas. What would you like to start with?",
+    "timestamp": "2026-10-09T07:04:08.661923"
+  },
+  {
+    "role": "user",
+    "content": "a frosted squarish button",
+    "timestamp": "2026-10-09T07:04:28.905456"
+  },
+  {
+    "role": "assistant",
+    "content": "**Building:** `components/Button.tsx` (frosted glass primitive) + `Button.preview.tsx`",
+    "timestamp": "2026-10-09T07:06:27.803137"
   }
 ]

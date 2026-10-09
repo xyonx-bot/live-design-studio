@@ -98,6 +98,37 @@ async def test_chat_routes_to_canvas_provider(client, auth, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_auto_creates_canvas_when_no_id(client, auth, monkeypatch):
+    import app.api.routes as routes
+
+    class FakeResponse:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": "OK"}}]}
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, **kw): return FakeResponse()
+    monkeypatch.setattr(routes.httpx, "AsyncClient", FakeClient)
+
+    # Explicit null → auto-create
+    r = await client.post("/api/chat", headers=auth,
+                          json={"message": "make a frosted button", "canvas_id": None})
+    assert r.status_code == 200
+    out = r.json()
+    assert out["canvas_created"] is True
+    assert out["canvas_id"].startswith("make-a-frosted-button")
+    # second message with canvas_id=None would create another new canvas — so it returns new id
+    r2 = await client.post("/api/chat", headers=auth,
+                           json={"message": "tweak padding", "canvas_id": None})
+    assert r2.json()["canvas_created"] is True
+    assert r2.json()["canvas_id"] != out["canvas_id"]
+    # cleanup
+    await client.delete(f"/api/canvases/{out['canvas_id']}", headers=auth)
+    await client.delete(f"/api/canvases/{r2.json()['canvas_id']}", headers=auth)
+
+
+@pytest.mark.asyncio
 async def test_chat_does_not_double_v1(client, auth, monkeypatch):
     """Regression: provider base_url ends with /v1 — must not append another."""
     r = await client.post("/api/canvases", headers=auth, json={"name": CANVAS + "-v1"})

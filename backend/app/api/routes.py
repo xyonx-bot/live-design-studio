@@ -370,7 +370,7 @@ async def upload_image(file: UploadFile = File(...), canvas_id: str = Form("defa
 class ChatIn(BaseModel):
     message: str
     session_id: Optional[str] = None
-    canvas_id: str = "default"
+    canvas_id: Optional[str] = None  # None/"auto" → create a fresh canvas from this message
     image_url: Optional[str] = None
 
 
@@ -378,14 +378,28 @@ class ChatOut(BaseModel):
     response: str
     session_id: Optional[str] = None
     canvas_id: Optional[str] = None
+    canvas_created: bool = False
     tools_used: List[str] = []
 
 
 @router.post("/chat", response_model=ChatOut)
 async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current_user)):
     """Start a chat turn in the background; poll /chat/jobs/<job_id> for the reply."""
-    import asyncio, uuid
-    canvas_id = body.canvas_id or "default"
+    import asyncio, uuid, re
+    canvas_created = False
+    if not body.canvas_id or body.canvas_id == "auto":
+        # Auto-create a fresh canvas from the user's first message; we name it from the message
+        # (short slug) and let the UI rename it later.
+        slug = re.sub(r"[^a-z0-9]+", "-", (body.message or "").lower()).strip("-")[:24] or "canvas"
+        base = f"{slug}"
+        try:
+            meta = canvases_service.create_canvas(base)
+            canvas_id = meta["id"]
+            canvas_created = True
+        except Exception:
+            canvas_id = "default"
+    else:
+        canvas_id = body.canvas_id
     try:
         canvases_service.get_canvas(canvas_id)
     except FileNotFoundError:
@@ -438,7 +452,7 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
             _jobs[job_id] = {**_jobs[job_id], "status": "error", "response": f"{type(e).__name__}: {e}"}
 
     asyncio.create_task(run())
-    return ChatOut(response="", session_id=job_id, canvas_id=canvas_id, tools_used=[])
+    return ChatOut(response="", session_id=job_id, canvas_id=canvas_id, canvas_created=canvas_created, tools_used=[])
 
 
 def messages_payload(canvas_id: str, new_message: str, history: List[dict], image_url: Optional[str] = None) -> List[dict]:
