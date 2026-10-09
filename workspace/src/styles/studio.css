@@ -184,6 +184,12 @@
 @media (max-width: 1050px) { .workspace { grid-template-columns: 220px minmax(0, 1fr); } .right-slot { display: none; } .topbar-center { position: static; transform: none; } .topbar-left { min-width: auto; } .topbar-right { min-width: auto; } .project-subtitle, .slash { display: none; } }
 .prompt-actions button { border: 0; background: #b9ed46; color: #1a2410; width: 27px; height: 27px; display: grid; place-items: center; border-radius: 4px; }
 .prompt-actions button:disabled { opacity: .35; }
+/* The model picker pill is text, not an icon — undo the square-icon box. */
+.prompt-actions .model-picker > button { width: auto; height: auto; display: inline-flex; padding: 5px 10px; background: #222229; border: 1px solid #34343a; color: #c9c8cf; font-size: 11px; gap: 5px; }
+.prompt-actions .model-picker .model-pill-label { display: inline-block; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+/* The inline-styled clear/retry buttons are text too — keep them from collapsing. */
+.prompt-actions > span:last-child > button { width: auto; height: 27px; display: inline-flex; align-items: center; justify-content: center; }
+.prompt-actions > span:last-child > button[aria-label="Clear chat"] { width: 27px; }
 .activity-footer { margin-top: 15px; justify-content: space-between; color: #62626a; font-size: 10px; }
 .activity-footer span, .activity-footer button { display: flex; align-items: center; gap: 6px; }
 .activity-footer button { background: none; border: 0; color: #8b8a92; font-size: 10px; }

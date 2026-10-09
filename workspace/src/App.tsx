@@ -98,6 +98,13 @@ const TYPE_META: Record<string, { icon: any; color: string }> = {
 }
 const COLORS = ['lime', 'blue', 'orange', 'purple', 'pink', 'slate']
 
+type VariantMeta = { variant: string; file: string; kind: 'tsx' | 'jsx' | 'html' }
+type Piece = { name: string; group: string; file: string; kind: 'tsx' | 'jsx' | 'html'; variants?: VariantMeta[] }
+
+// variantStore holds loaded variant Components/html per piece key ("group:Name"). Not reactive —
+// re-rendered via `previews`/`htmlPieces` setters.
+const variantStore: Record<string, { meta: VariantMeta; Component?: React.ComponentType; html?: string }[]> = {}
+
 /**
  * Load a canvas's preview modules directly via /@fs/<abs>… (Vite transform on hit).
  * No static glob — pieces appear live as the agent writes them.
@@ -129,21 +136,31 @@ function useCanvasPreviews(canvasId: string) {
     try {
       const res = await api(`/api/canvases/${encodeURIComponent(canvasId)}/pieces`)
       if (res.ok) {
-        const pieces: { name: string; group: string; file: string; kind: 'tsx' | 'jsx' | 'html' }[] = await res.json()
+        const pieces: Piece[] = await res.json()
+        const loaded: Record<string, { canonical: React.ComponentType; variants: VariantMeta[] }> = {}
         for (const p of pieces) {
           const key = `${p.group}:${p.name}`
-          try {
-            if (p.kind === 'html') {
-              const r = await fetch(`/canvases/${encodeURIComponent(canvasId)}/src/${p.group}/${p.file}`)
-              if (r.ok) htmls[key] = await r.text()
-            } else {
-              // /@fs/abs — no cache-bust; Vite serves the current module from its graph.
-              const mod = await import(/* @vite-ignore */ `/@fs/app/canvases/${encodeURIComponent(canvasId)}/src/${p.group}/${p.file}`)
-              if (mod?.default) found[key] = mod.default
+          const vars: VariantMeta[] = p.variants ?? [{ variant: 'default', file: p.file, kind: p.kind }]
+          const loadedVariants: { meta: VariantMeta; Component?: React.ComponentType; html?: string }[] = []
+          for (const v of vars) {
+            try {
+              if (v.kind === 'html') {
+                const r = await fetch(`/canvases/${encodeURIComponent(canvasId)}/src/${p.group}/${encodeURIComponent(v.file)}`)
+                if (r.ok) loadedVariants.push({ meta: v, html: await r.text() })
+              } else {
+                const mod = await import(/* @vite-ignore */ `/@fs/app/canvases/${encodeURIComponent(canvasId)}/src/${p.group}/${encodeURIComponent(v.file)}`)
+                if (mod?.default) loadedVariants.push({ meta: v, Component: mod.default })
+              }
+            } catch (e) {
+              console.warn('preview load failed', key, v.file, e)
             }
-          } catch (e) {
-            console.warn('preview load failed', key, e)
           }
+          if (loadedVariants.length === 0) continue
+          const canonical = loadedVariants.find(v => v.meta.variant === 'default') ?? loadedVariants[0]
+          if (canonical.Component) found[key] = canonical.Component
+          else if (canonical.html) htmls[key] = canonical.html
+          loaded[key] = { canonical: found[key] ?? (() => null), variants: vars }
+          variantStore[key] = loadedVariants
         }
       }
     } catch { /* backend down */ }
@@ -152,7 +169,7 @@ function useCanvasPreviews(canvasId: string) {
   }
 
   useEffect(() => { load() }, [canvasId])
-  return { previews, htmlPieces, reload: load }
+  return { previews, htmlPieces, reload: load, variantStore }
 }
 
 function LogoMark() {
@@ -589,7 +606,9 @@ function ModelPicker({ currentModel, onChange }: { currentModel: string; onChang
 
   return (
     <span className="model-picker">
-      <button type="button" onClick={() => setOpen(!open)} title="Set chat model">{currentModel || 'model'}</button>
+      <button type="button" onClick={() => setOpen(!open)} title={currentModel || 'Set chat model'}>
+        <span className="model-pill-label">{(currentModel || 'model').split('/').pop()}</span>
+      </button>
       {open && (
         <div className="model-menu">
           <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="model id, e.g. hermes-agent"
