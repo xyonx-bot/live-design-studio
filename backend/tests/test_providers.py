@@ -9,8 +9,7 @@ async def test_list_providers_shape(client, auth):
     assert r.status_code == 200
     providers = r.json()
     ids = {p["id"] for p in providers}
-    assert "hermes-default" in ids
-    assert "openrouter" in ids
+    assert ids == {"openrouter", "nvidia"}   # only these two (no hermes-default, no custom)
     for p in providers:
         assert "label" in p and "requires_key" in p and "has_key" in p and "can_probe" in p
 
@@ -59,11 +58,11 @@ async def test_validate_model_hermes_default_no_auth_vs_http(client, auth, monke
     monkeypatch.setattr(routes.httpx, "AsyncClient", FakeClient)
 
     r = await client.post("/api/model-providers/validate", headers=auth,
-                          json={"provider": "hermes-default", "model": "hermes-agent"})
+                          json={"provider": "nvidia", "model": "hermes-agent"})
     assert r.status_code == 200
     assert r.json()["valid"] is True
 
     r = await client.post("/api/model-providers/validate", headers=auth,
-                          json={"provider": "hermes-default", "model": "nope"})
+                          json={"provider": "nvidia", "model": "nope"})
     assert r.json()["valid"] is False
     assert "available_models" in r.json()

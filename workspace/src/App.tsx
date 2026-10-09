@@ -601,7 +601,7 @@ function ModelPicker({ currentModel, currentProvider, onChange }: {
         const rp = await api('/api/model-providers')
         if (rp.ok) {
           const list = await rp.json()
-          setProviders(list.filter((p: ProviderOption) => p.id === 'openrouter' || p.id === 'nvidia'))
+          setProviders(list)   // backend already restricts to openrouter + nvidia
         }
         // Models for current provider
         const rm = await api(`/api/model-providers/validate`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ provider: currentProvider || 'openrouter', model: currentModel }) })

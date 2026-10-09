@@ -269,11 +269,8 @@ async def get_defaults(user: dict = Depends(get_current_user)):
 
 # ── Model providers — curated list so the UI is a dropdown not a text box ────
 PROVIDERS = [
-    {"id": "hermes-default", "label": "Default (Hermes api_server)", "base_url": None},  # None → use HERMES_AGENT_URL
-    {"id": "openai-compatible", "label": "OpenAI-compatible (custom)", "base_url": None, "requires_key": True},
     {"id": "openrouter", "label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY"},
     {"id": "nvidia", "label": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1", "key_env": "NVIDIA_API_KEY"},
-    {"id": "anthropic", "label": "Anthropic", "base_url": "https://api.anthropic.com/v1", "key_env": "ANTHROPIC_API_KEY"},
 ]
 
 
