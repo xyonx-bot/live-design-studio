@@ -257,6 +257,16 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
         manager.disconnect(websocket)
 
 
+MIRA_DEFAULT_PROVIDER = os.getenv("HERMES_DEFAULT_PROVIDER", "nvidia")
+MIRA_DEFAULT_MODEL = os.getenv("HERMES_MODEL", "moonshotai/kimi-k3")
+
+
+@router.get("/defaults")
+async def get_defaults(user: dict = Depends(get_current_user)):
+    """Mira's default provider+model — what an uninitialized canvas should fall back to."""
+    return {"provider": MIRA_DEFAULT_PROVIDER, "model": MIRA_DEFAULT_MODEL}
+
+
 # ── Model providers — curated list so the UI is a dropdown not a text box ────
 PROVIDERS = [
     {"id": "hermes-default", "label": "Default (Hermes api_server)", "base_url": None},  # None → use HERMES_AGENT_URL
@@ -336,7 +346,7 @@ async def set_canvas_provider_model(canvas_id: str, body: CanvasProviderChoice, 
 async def get_canvas_provider_model(canvas_id: str, user: dict = Depends(get_current_user)):
     try:
         return canvases_service.get_provider_model(canvas_id) or {
-            "provider": "hermes-default", "model": HERMES_AGENT_MODEL}
+            "provider": MIRA_DEFAULT_PROVIDER, "model": MIRA_DEFAULT_MODEL}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Canvas not found")
 

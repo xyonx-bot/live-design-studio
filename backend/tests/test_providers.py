@@ -20,10 +20,11 @@ async def test_set_get_provider_model(client, auth):
     r = await client.post("/api/canvases", headers=auth, json={"name": CANVAS + "-model"})
     cid = r.json()["id"]
 
-    # default returns hermes-default
+    # default returns Mira's default
     r = await client.get(f"/api/canvases/{cid}/provider-model", headers=auth)
     assert r.status_code == 200
-    assert r.json()["provider"] == "hermes-default"
+    assert r.json()["provider"] == "nvidia"
+    assert r.json()["model"] == "moonshotai/kimi-k3"
 
     # set + get round-trip
     r = await client.post(f"/api/canvases/{cid}/provider-model", headers=auth,
