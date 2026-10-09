@@ -406,6 +406,9 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
         if not base_url:
             base_url = HERMES_AGENT_URL.rstrip("/")
         base_url = base_url.rstrip("/")
+        # Some providers include /v1 in base_url, some don't — normalize once.
+        if not base_url.endswith("/v1"):
+            base_url += "/v1"
 
         import os as _os
         if provider and provider.get("key_env"):
@@ -421,7 +424,7 @@ async def chat_with_agent(body: ChatIn, current_user: dict = Depends(get_current
             # Persist the user's turn immediately so a refresh / reload doesn't lose it.
             canvases_service.append_history(canvas_id, "user", body.message, image_url=body.image_url)
             async with httpx.AsyncClient(timeout=600.0) as client:
-                resp = await client.post(f"{base_url}/v1/chat/completions",
+                resp = await client.post(f"{base_url}/chat/completions",
                                          json={"model": model,
                                                "messages": messages_payload(canvas_id, body.message, history, image_url=body.image_url),
                                                "stream": False},

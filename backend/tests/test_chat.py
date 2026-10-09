@@ -91,7 +91,40 @@ async def test_chat_routes_to_canvas_provider(client, auth, monkeypatch):
         if jr.json()["status"] != "running":
             break
     assert called["url"] is not None and called["url"].endswith("/v1/chat/completions")
-    assert called["url"].startswith("https://openrouter.ai/api/v1"), called["url"]
+    assert called["url"] == "https://openrouter.ai/api/v1/chat/completions", called["url"]
     assert called["model"] == "moonshotai/kimi-k3"
+
+    await client.delete(f"/api/canvases/{canvas_id}", headers=auth)
+
+
+@pytest.mark.asyncio
+async def test_chat_does_not_double_v1(client, auth, monkeypatch):
+    """Regression: provider base_url ends with /v1 — must not append another."""
+    r = await client.post("/api/canvases", headers=auth, json={"name": CANVAS + "-v1"})
+    canvas_id = r.json()["id"]
+    await client.post(f"/api/canvases/{canvas_id}/provider-model", headers=auth,
+                      json={"provider": "nvidia", "model": "z-ai/glm-5.3"})  # nvidia base_url has /v1 already
+
+    captured = {"url": None}
+    class FakeResponse:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": "OK"}}]}
+    class FakeClient:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, **kw): captured["url"] = url; return FakeResponse()
+    import app.api.routes as routes
+    monkeypatch.setattr(routes.httpx, "AsyncClient", FakeClient)
+
+    r = await client.post("/api/chat", headers=auth, json={"message": "x", "canvas_id": canvas_id})
+    job_id = r.json()["session_id"]
+    import asyncio
+    for _ in range(60):
+        await asyncio.sleep(0.05)
+        jr = await client.get(f"/api/chat/jobs/{job_id}", headers=auth)
+        if jr.json()["status"] != "running":
+            break
+    assert captured["url"] == "https://integrate.api.nvidia.com/v1/chat/completions", captured["url"]
 
     await client.delete(f"/api/canvases/{canvas_id}", headers=auth)
