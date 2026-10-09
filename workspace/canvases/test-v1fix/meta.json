@@ -1,0 +1,9 @@
+{
+  "id": "test-v1fix",
+  "name": "test-v1fix",
+  "session_id": null,
+  "archived": false,
+  "created_at": "2026-10-09T08:44:22.317708",
+  "provider": "nvidia",
+  "model": "z-ai/glm-5.3"
+}

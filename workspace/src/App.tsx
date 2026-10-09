@@ -565,10 +565,7 @@ function ActivityPanel({
             {attachedImage && <span className="attach-chip" title={attachedImage.name}>{attachedImage.name.slice(0, 18)}</span>}
           </span>
           <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            {isLoading && elapsed && (
-              <span className="agent-state" title="Agent working" aria-live="polite">{elapsed}s</span>
-            )}
-            <button aria-label="Send prompt" disabled={!prompt.trim() || isLoading} onClick={onSend}><Send size={15} /></button>
+            <button aria-label="Send prompt" disabled={!prompt.trim()} onClick={onSend}><Send size={15} /></button>
           </span>
         </div>
       </div>
@@ -968,11 +965,14 @@ export default function App() {
 
   const sendMessage = async () => {
     const text = prompt.trim()
-    if (!text || isLoading) return
+    if (!text) return
     lastMessageRef.current[canvasId] = text
     setPrompt('')
-    setIsLoading(true)
-    loadingFor.current[canvasId] = { jobId: null, startedAt: Date.now() }
+    // Only mark busy when this canvas isn't already busy; user CAN queue another send while busy.
+    if (!isLoading) {
+      setIsLoading(true)
+      loadingFor.current[canvasId] = { jobId: null, startedAt: Date.now() }
+    }
 
     // if an image is attached, upload it to R2 first and include the public URL
     let imageUrl: string | null = null
@@ -993,7 +993,9 @@ export default function App() {
     }
 
     const apiCanvasId = canvasId === NO_CANVAS ? null : canvasId
-    setMessagesFor(canvasId, (m) => [...m, { role: 'user', content: text + (imageUrl ? `\n\n[${attachedImage?.name}](${imageUrl})` : ''), timestamp: new Date() }])
+    const userMsg: ChatMessage = { role: 'user', content: text + (imageUrl ? `\n\n[${attachedImage?.name}](${imageUrl})` : ''), timestamp: new Date() }
+    // Optimistic append under current canvas AND (if we might switch later) keep it under the user-visible one — we'll reconcile via server history after switch.
+    setMessagesFor(canvasId, (m) => [...m, userMsg])
     try {
       const res = await api('/api/chat', {
         method: 'POST',

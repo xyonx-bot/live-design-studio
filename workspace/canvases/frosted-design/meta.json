@@ -1,0 +1,9 @@
+{
+  "id": "frosted-design",
+  "name": "frosted-design",
+  "session_id": null,
+  "archived": false,
+  "created_at": "2026-10-09T08:38:43.852759",
+  "provider": "nvidia",
+  "model": "moonshotai/kimi-k3"
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "role": "user",
+    "content": "hi",
+    "timestamp": "2026-10-09T08:44:22.706936"
+  },
+  {
+    "role": "assistant",
+    "content": "Hey! What UI piece would you like to build? Describe a component, section, or page and I'll create it on the canvas.",
+    "timestamp": "2026-10-09T08:44:25.144280"
+  }
+]

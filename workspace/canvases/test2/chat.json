@@ -1,0 +1,18 @@
+[
+  {
+    "role": "user",
+    "content": "hi",
+    "timestamp": "2026-10-09T10:14:08.565273"
+  },
+  {
+    "role": "assistant",
+    "content": "Hi! Ready to build UI pieces in the test2 canvas \u2014 describe what you want and I'll create it.",
+    "timestamp": "2026-10-09T10:14:31.263547"
+  },
+  {
+    "role": "user",
+    "content": "lets creat thi ui and the componet it may need",
+    "timestamp": "2026-10-09T10:15:00.516140",
+    "image_url": "https://cdn.joyverse.fun/chat/bc6bf65b4165487b.webp"
+  }
+]
